@@ -67,39 +67,32 @@ Ask your AI assistant:
 
 ## 📦 What's Included (MVP)
 
-This MVP includes 5 essential tools:
+This MVP includes 5 essential tools to **interact with JSON-RPC**
 
 1. **get_account_balance** - Check HBAR balance of any account
-2. **get_transaction_receipt** - Get transaction details
-3. **get_block_info** - View block information 
-4. **estimate_gas** - Calculate transaction costs
-5. **get_network_info** - Current network status
+
+|  With MCP | Without MCP | 
+|---|---|
+| <img width="863" height="400" alt="account balance" src="https://github.com/user-attachments/assets/7ce3879d-4862-49b6-a713-89332eeb033a" /> | <img width="863" height="675" alt="account_balance_without_mcp" src="https://github.com/user-attachments/assets/40351c8d-306f-490a-b4fa-25bf8900602a" /> |  
+
+2. **get_block_info** - View block information 
+
+<img width="863" height="408" alt="block_info" src="https://github.com/user-attachments/assets/14b6937e-b270-4332-b0e6-06f49a078030" />
+
+3. **estimate_gas** - Calculate transaction costs
+
+<img width="863" height="440" alt="estimategas" src="https://github.com/user-attachments/assets/6fabde4c-fc2f-4c96-879e-53163d0299bf" />
+
+4. **get_network_info** - Current network status
+
+<img width="863" height="499" alt="network info" src="https://github.com/user-attachments/assets/f38e348a-1596-48c0-a093-33b362975fec" />
+
+5. **get_transaction_receipt** - Get transaction details
+
 
 ## 🌐 Networks
 
 - **Testnet** (default) - For testing
-- **Mainnet** - For production
-- **Previewnet** - For development
-
-## ⚠️ Demo Limitations
-
-This MVP demo is intentionally limited to showcase core functionality:
-
-- Read-only operations (no transaction signing)
-- Basic error handling
-- Community endpoints only
-- Limited to 5 essential tools
-
-**Coming in the full version:**
-- Transaction creation and signing
-- Smart contract deployment and interaction
-- Token operations (create, transfer, query)
-- Account creation and management
-- Scheduled transactions
-- Multi-signature support
-- Production-grade error handling
-- Custom RPC endpoint configuration
-- and more...
 
 ## 🎯 Example Queries
 
