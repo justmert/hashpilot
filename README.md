@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that lets AI assistants interact with Hedera blockchain in real-time.
 
-> **🎯 This is a demo MVP** - The production version will include advanced features like transaction signing, smart contract interactions, token operations, and more.
+> **This is a demo MVP**
 
 ## What is MCP?
 
