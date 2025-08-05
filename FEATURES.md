@@ -1,3 +1,11 @@
+Hashpilot is a developer assistant built on the Model Context Protocol (MCP) framework, specifically designed to improve the development experience on the Hedera network. Hashpilot addresses the critical challenge of developer experience fragmentation in the Hedera ecosystem by providing a unified, intelligent interface that seamlessly integrates with popular IDEs and AI assistants.
+Core Architecture
+
+While existing blockchain MCPs typically focus on either smart contract code generation or documentation querying, Hashpilot represents a comprehensive MCP beyond these limited approaches. Most blockchain development assistants either helping write smart contract code or answering questions from docs—but fail to bridge the gap between code generation and actual interaction/execution. Hashpilot fundamentally transforms this paradigm by integrating with direct Hedera-cli execution, real-time RPC operations, Hedera developer toolings, and complete development framework orchestration (Hardhat/Foundry), as well as RAG-powered documentation search and intelligent code generation. This means developers can not only receive code for "create a token" but immediately execute "create this token on testnet," then "deploy a contract that interacts with it," and "run tests to verify integration"—all within where they do 'vibe-coding', eliminating the traditional tool fragmentation that no existing blockchain MCP currently addresses.
+
+Hashpilot operates as a sophisticated MCP server that bridges MCP executer environments like Claude, Cursor, Windsurf, Gemini CLI with the comprehensive Hedera development toolkit.
+
+
 ## Core Execution Features
 
 **Executing Hedera CLI Commands**:The AI assistant can execute the complete suite of Hedera CLI commands through natural language requests within the IDE, eliminating context switching between terminal and code editor. (Example: User says "Create a new testnet account named 'test-user' with 1000 HBAR" → MCP executes `hcli account create --alias test-user --balance 1000` and returns the account ID). It can support all major CLI commands.
