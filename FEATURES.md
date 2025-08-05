@@ -4,13 +4,13 @@
 
 The MCP supports all major CLI command categories:
 
-    - Account Management: Create, import, and manage Hedera accounts with customizable parameters including balance allocation and key types. Query comprehensive account information including HBAR/token balances, EVM addresses, and manage address books for multi-account workflows.
+- Account Management: Create, import, and manage Hedera accounts with customizable parameters including balance allocation and key types. Query comprehensive account information including HBAR/token balances, EVM addresses, and manage address books for multi-account workflows.
 
-    - Token Operations: Create fungible tokens with comprehensive configuration including custom fees, multi-signature keys, and supply controls using both simple commands and JSON-based configuration files. Execute token association and transfer operations between accounts with full support for complex tokenomics.
+- Token Operations: Create fungible tokens with comprehensive configuration including custom fees, multi-signature keys, and supply controls using both simple commands and JSON-based configuration files. Execute token association and transfer operations between accounts with full support for complex tokenomics.
 
-    - Consensus Service (HCS): Create public and private topics with configurable submit and admin keys, submit authenticated messages, and query topic messages with advanced filtering by sequence numbers and other criteria.
+- Consensus Service (HCS): Create public and private topics with configurable submit and admin keys, submit authenticated messages, and query topic messages with advanced filtering by sequence numbers and other criteria.
 
-    - Network and State Management: Switch seamlessly between networks (mainnet, testnet, previewnet, localnet) and manage CLI state through backup/restore operations.
+- Network and State Management: Switch seamlessly between networks (mainnet, testnet, previewnet, localnet) and manage CLI state through backup/restore operations.
 
 **Direct RPC Network Operations**: Perform real-time blockchain operations using JSON-RPC relay for comprehensive state queries and transaction submission. Seamlessly bridge between Hedera's native services and EVM-compatible operations for maximum flexibility. (Example: "Get balance of account 0.0.1234" → MCP uses JSON-RPC methods to query and return the balance)
 
