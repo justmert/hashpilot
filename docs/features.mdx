@@ -1,0 +1,185 @@
+---
+title: Features
+description: Overview of HashPilot capabilities
+---
+
+HashPilot provides **31 MCP tools with 100+ operations** covering the complete Hedera development workflow. Here's an overview of what you can do.
+
+## Account Management
+
+Manage Hedera accounts with natural language:
+
+- **Create accounts** with configurable initial HBAR balance
+- **Query balances** for HBAR and all associated tokens
+- **Transfer HBAR** between accounts
+- **Get account info** including EVM address, keys, and memo
+
+```
+"Create a new account with 50 HBAR"
+"Check the balance of 0.0.12345"
+"Transfer 10 HBAR to 0.0.67890"
+```
+
+## Token Operations (HTS)
+
+Full Hedera Token Service support:
+
+| Operation | Description |
+|-----------|-------------|
+| **create** | Create fungible or NFT tokens with custom fees |
+| **associate** | Associate token with account |
+| **transfer** | Transfer tokens between accounts |
+| **mint** | Mint additional tokens |
+| **burn** | Burn tokens from treasury |
+| **freeze/unfreeze** | Control account transfer ability |
+| **kyc_grant/kyc_revoke** | Manage KYC compliance |
+| **pause/unpause** | Halt/resume all token operations |
+| **wipe** | Remove tokens from any account |
+
+```
+"Create a fungible token called MyToken with symbol MTK"
+"Mint 1000 tokens to account 0.0.12345"
+"Transfer 100 MTK tokens to 0.0.67890"
+```
+
+## Consensus Service (HCS)
+
+Hedera Consensus Service for ordered messaging:
+
+- **Create topics** with configurable admin and submit keys
+- **Submit messages** with auto-chunking for large payloads
+- **Query messages** from topic history (free via Mirror Node)
+- **Subscribe** to real-time message streams
+
+```
+"Create a new HCS topic for audit logs"
+"Submit message 'Transaction approved' to topic 0.0.12345"
+"Get the last 10 messages from topic 0.0.12345"
+```
+
+## Smart Contracts
+
+Deploy and interact with Solidity contracts:
+
+### Hardhat Integration
+- Initialize new Hardhat projects
+- Compile contracts
+- Run tests with Mocha/Chai
+- Deploy to any network
+- Verify on HashScan
+
+### Foundry Integration
+- Initialize Foundry projects
+- Build with forge
+- Run fuzz tests
+- Deploy with forge create
+- Execute scripts with broadcast
+
+### JSON-RPC Operations
+- 55+ JSON-RPC methods supported
+- `eth_call` for read operations (free)
+- `eth_sendRawTransaction` for writes
+- Full EVM compatibility
+
+```
+"Deploy my Counter.sol contract to testnet"
+"Call the balanceOf function on contract 0x..."
+"Verify my contract on HashScan"
+```
+
+## Stablecoin Studio
+
+Enterprise-grade stablecoin management:
+
+- **Create** compliant stablecoins with role-based controls
+- **Cash-in/Burn** with allowance management
+- **Freeze/Unfreeze** individual accounts
+- **KYC management** for compliance
+- **Pause/Unpause** for emergency controls
+- **Role management** (CASHIN, BURN, WIPE, FREEZE, KYC, PAUSE, DELETE)
+- **Proof-of-Reserve** support
+
+```
+"Create a USD-backed stablecoin with KYC requirements"
+"Grant CASHIN role to account 0.0.12345"
+"Check stablecoin balance for account 0.0.67890"
+```
+
+## RAG Documentation
+
+AI-powered knowledge base with 10,000+ pre-indexed documents:
+
+### docs_search
+Semantic search across all Hedera documentation:
+```
+"Search for token creation examples in JavaScript"
+```
+
+### docs_ask
+Ask questions and get cited answers:
+```
+"How do scheduled transactions work on Hedera?"
+```
+
+### code_generate
+Generate SDK code from descriptions:
+```
+"Generate TypeScript code to create an NFT with metadata"
+```
+
+**Indexed Sources:**
+- Official Hedera Documentation
+- SDK References (JavaScript, Java, Go, Rust, Python)
+- Hedera Improvement Proposals (HIPs)
+- Tutorials and Examples
+- Smart Contract Patterns
+
+<Note>
+RAG features require an OpenAI API key configured in your MCP settings.
+</Note>
+
+## Development Tools
+
+### Address Book
+Save and manage multiple accounts:
+- Add account references
+- Import accounts with private keys
+- Organize with aliases and nicknames
+
+### State Management
+- Backup server state
+- Restore from backups
+- Export configuration
+
+### Error Explanation
+Get help understanding Hedera errors:
+```
+"Explain error INSUFFICIENT_PAYER_BALANCE"
+```
+
+### Network Switching
+Switch between networks seamlessly:
+- mainnet
+- testnet
+- previewnet
+- local (for development)
+
+## Auto-Key Resolution
+
+HashPilot automatically uses your configured operator account for all operations. No need to manually specify private keys for every deployment or transaction.
+
+**Resolution order:**
+1. Explicitly provided key in the request
+2. Address book entry (if alias specified)
+3. MCP operator account (default)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tool Reference" icon="wrench" href="/tools">
+    Complete API documentation for all tools
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

@@ -1,0 +1,58 @@
+# Source files (compiled JS is in dist/)
+src/
+scripts/
+tests/
+docs/
+docker/
+
+# Config files
+tsconfig.json
+jest.config.js
+.eslintrc*
+.prettierrc*
+.env*
+.mcp.json*
+
+# Development artifacts
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Build artifacts not needed
+*.tsbuildinfo
+
+# Misc
+PROGRESSION.md
+requirements.md
+RAG_COVERAGE_REPORT.md
+*.chromadb/
+
+# Runtime state files
+addressbook.json
+state.json
+backups/
+
+# Example files
+.mcp.json.example
+.env.example
+
+# Claude config
+.claude/

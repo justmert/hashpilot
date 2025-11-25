@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "hashpilot": {
+      "command": "node",
+      "args": ["/path/to/hedera-mcp/dist/index.js"],
+      "env": {
+        "HEDERA_NETWORK": "testnet",
+        "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+        "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+        "OPENAI_API_KEY": "sk-proj-YOUR_OPENAI_API_KEY"
+      }
+    }
+  }
+}

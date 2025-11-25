@@ -1,0 +1,241 @@
+---
+title: Installation
+description: Install and configure HashPilot with your AI editor
+---
+
+This guide covers installing HashPilot and configuring it with your preferred AI editor.
+
+## Install HashPilot
+
+### Option 1: Global Installation (Recommended)
+
+```bash
+npm install -g hashpilot
+```
+
+### Option 2: Use with npx (No Installation)
+
+You can run HashPilot directly with npx - no global installation required:
+
+```bash
+npx hashpilot
+```
+
+<Note>
+When using npx in your MCP configuration, use `npx -y hashpilot` to auto-confirm the install prompt.
+</Note>
+
+## Environment Variables
+
+HashPilot requires these environment variables in your MCP configuration:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `HEDERA_NETWORK` | Yes | Network to use: `testnet`, `mainnet`, or `previewnet` |
+| `HEDERA_OPERATOR_ID` | Yes | Your Hedera account ID (e.g., `0.0.12345`) |
+| `HEDERA_OPERATOR_KEY` | Yes | Your private key in hex format |
+| `OPENAI_API_KEY` | For RAG | Required for documentation search and code generation |
+
+## Getting a Hedera Account
+
+1. Visit [portal.hedera.com](https://portal.hedera.com)
+2. Create a free account
+3. Navigate to the **Testnet** tab
+4. Copy your **Account ID** (e.g., `0.0.12345`)
+5. Copy your **Private Key** (DER encoded hex string)
+
+<Warning>
+Never share your private key. Keep it secure and only use testnet keys for development.
+</Warning>
+
+---
+
+## Editor Configuration
+
+Choose your AI editor below for specific setup instructions.
+
+<Tabs>
+  <Tab title="Claude Desktop">
+    ### Claude Desktop
+
+    **Config file location:**
+    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+    - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+    **Configuration:**
+    ```json
+    {
+      "mcpServers": {
+        "hashpilot": {
+          "command": "npx",
+          "args": ["-y", "hashpilot"],
+          "env": {
+            "HEDERA_NETWORK": "testnet",
+            "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+            "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+            "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY"
+          }
+        }
+      }
+    }
+    ```
+
+    **Steps:**
+    1. Create or edit the config file at the location above
+    2. Add the configuration with your credentials
+    3. Restart Claude Desktop
+    4. Test by asking: "Use the health_check tool"
+  </Tab>
+
+  <Tab title="Cursor">
+    ### Cursor
+
+    **Config file location:**
+    - **macOS**: `~/.cursor/mcp.json`
+    - **Windows**: `%USERPROFILE%\.cursor\mcp.json`
+    - **Linux**: `~/.cursor/mcp.json`
+
+    **Configuration:**
+    ```json
+    {
+      "mcpServers": {
+        "hashpilot": {
+          "command": "npx",
+          "args": ["-y", "hashpilot"],
+          "env": {
+            "HEDERA_NETWORK": "testnet",
+            "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+            "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+            "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY"
+          }
+        }
+      }
+    }
+    ```
+
+    **Steps:**
+    1. Create the `.cursor` directory if it doesn't exist
+    2. Create `mcp.json` with the configuration above
+    3. Restart Cursor
+    4. Open the MCP panel to verify HashPilot is connected
+  </Tab>
+
+  <Tab title="Windsurf">
+    ### Windsurf
+
+    **Config file location:**
+    - **macOS**: `~/.codeium/windsurf/mcp_config.json`
+    - **Windows**: `%USERPROFILE%\.codeium\windsurf\mcp_config.json`
+    - **Linux**: `~/.codeium/windsurf/mcp_config.json`
+
+    **Configuration:**
+    ```json
+    {
+      "mcpServers": {
+        "hashpilot": {
+          "command": "npx",
+          "args": ["-y", "hashpilot"],
+          "env": {
+            "HEDERA_NETWORK": "testnet",
+            "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+            "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+            "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY"
+          }
+        }
+      }
+    }
+    ```
+
+    **Steps:**
+    1. Create the directory path if it doesn't exist
+    2. Create `mcp_config.json` with the configuration above
+    3. Restart Windsurf
+    4. Test the connection with a simple query
+  </Tab>
+
+  <Tab title="VS Code">
+    ### VS Code (with MCP Extension)
+
+    First, install the [MCP extension](https://marketplace.visualstudio.com/items?itemName=anthropics.mcp) from the VS Code marketplace.
+
+    **Add to `settings.json`:**
+    ```json
+    {
+      "mcp.servers": {
+        "hashpilot": {
+          "command": "npx",
+          "args": ["-y", "hashpilot"],
+          "env": {
+            "HEDERA_NETWORK": "testnet",
+            "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+            "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+            "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY"
+          }
+        }
+      }
+    }
+    ```
+
+    **Steps:**
+    1. Install the MCP extension
+    2. Open Settings (Cmd/Ctrl + ,)
+    3. Click "Open Settings (JSON)" in the top right
+    4. Add the configuration above
+    5. Reload VS Code
+  </Tab>
+</Tabs>
+
+---
+
+## Using Global Installation
+
+If you installed HashPilot globally, you can use `hashpilot` directly instead of `npx`:
+
+```json
+{
+  "mcpServers": {
+    "hashpilot": {
+      "command": "hashpilot",
+      "env": {
+        "HEDERA_NETWORK": "testnet",
+        "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+        "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+        "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Verify Installation
+
+After configuring your editor, test that HashPilot is working:
+
+1. Ask your AI assistant: **"Run the health_check tool"**
+2. You should see a response with HashPilot version and status
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "version": "0.1.0",
+    "network": "testnet",
+    "operatorId": "0.0.12345"
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Features" icon="list" href="/features">
+    Learn what HashPilot can do
+  </Card>
+  <Card title="Tool Reference" icon="wrench" href="/tools">
+    Explore all 30+ tools
+  </Card>
+</CardGroup>

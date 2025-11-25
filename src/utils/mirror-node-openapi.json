@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin), indent=2))
+    ^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'yaml'

@@ -1,0 +1,211 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for HashPilot
+---
+
+## Connection Issues
+
+### HashPilot not appearing in editor
+
+**Symptoms:** MCP tools not available, server not listed
+
+**Solutions:**
+
+1. Verify your config file is in the correct location
+2. Check JSON syntax is valid (no trailing commas)
+3. Restart your editor completely
+4. Check if `npx hashpilot` runs successfully in terminal
+
+```bash
+# Test if HashPilot runs
+npx hashpilot
+```
+
+### "Server disconnected" or timeout errors
+
+**Solutions:**
+
+1. Check your internet connection
+2. Verify Hedera network is operational at [status.hedera.com](https://status.hedera.com)
+3. Try switching to a different network (testnet → mainnet)
+
+---
+
+## Authentication Errors
+
+### INVALID_ACCOUNT_ID
+
+**Cause:** Account ID format is incorrect
+
+**Solution:** Use format `0.0.12345` (realm.shard.num)
+
+```json
+"HEDERA_OPERATOR_ID": "0.0.12345"  // Correct
+"HEDERA_OPERATOR_ID": "12345"      // Wrong
+```
+
+### INVALID_SIGNATURE or KEY_PREFIX_MISMATCH
+
+**Cause:** Private key format is incorrect
+
+**Solutions:**
+
+1. Ensure key is in hex format (not DER encoded)
+2. Remove any prefixes like "302e020100..."
+3. Use the raw 64-character hex key
+
+```json
+// Correct - raw hex
+"HEDERA_OPERATOR_KEY": "abc123def456..."
+
+// Wrong - DER encoded
+"HEDERA_OPERATOR_KEY": "302e020100300506032b657004220420abc123..."
+```
+
+### INSUFFICIENT_PAYER_BALANCE
+
+**Cause:** Account doesn't have enough HBAR for transaction fees
+
+**Solutions:**
+
+1. Check balance: `"Check balance of 0.0.12345"`
+2. Fund from [Hedera Portal](https://portal.hedera.com) (testnet)
+3. Transfer HBAR from another account
+
+---
+
+## RAG / Documentation Errors
+
+### "openaiApiKey is required"
+
+**Cause:** OpenAI API key not configured
+
+**Solution:** Add `OPENAI_API_KEY` to your MCP config:
+
+```json
+"env": {
+  "OPENAI_API_KEY": "sk-proj-..."
+}
+```
+
+### Empty search results
+
+**Cause:** Query too specific or ChromaDB not accessible
+
+**Solutions:**
+
+1. Try broader search terms
+2. Check if the hosted ChromaDB is accessible
+3. Verify OpenAI API key is valid
+
+---
+
+## Token Operations
+
+### TOKEN_NOT_ASSOCIATED_TO_ACCOUNT
+
+**Cause:** Account must associate with token before receiving it
+
+**Solution:** Associate first, then transfer:
+
+```
+"Associate token 0.0.12345 with account 0.0.67890"
+"Transfer 100 tokens to account 0.0.67890"
+```
+
+### TOKEN_HAS_NO_SUPPLY_KEY
+
+**Cause:** Trying to mint/burn tokens without supply key
+
+**Solution:** When creating token, include supply key:
+
+```
+"Create token with supply key enabled"
+```
+
+---
+
+## Smart Contract Issues
+
+### CONTRACT_REVERT_EXECUTED
+
+**Cause:** Contract execution failed (reverted)
+
+**Solutions:**
+
+1. Check function parameters match expected types
+2. Verify account has sufficient balance
+3. Review contract require() conditions
+4. Use `error_explain` tool for details
+
+### Gas estimation failed
+
+**Solutions:**
+
+1. Increase gas limit manually
+2. Check if function exists in ABI
+3. Verify contract is deployed on target network
+
+---
+
+## Network Issues
+
+### Network not reachable
+
+**Solutions:**
+
+1. Check [status.hedera.com](https://status.hedera.com) for outages
+2. Try a different network
+3. Verify your firewall allows HTTPS connections
+
+### Wrong network
+
+**Cause:** Operating on wrong network (e.g., mainnet instead of testnet)
+
+**Solution:** Switch network:
+
+```
+"Switch to testnet network"
+```
+
+Or update config:
+
+```json
+"HEDERA_NETWORK": "testnet"
+```
+
+---
+
+## Common Error Codes
+
+| Error                        | Meaning               | Solution          |
+| ---------------------------- | --------------------- | ----------------- |
+| `INSUFFICIENT_PAYER_BALANCE` | Not enough HBAR       | Fund account      |
+| `INVALID_ACCOUNT_ID`         | Wrong account format  | Use 0.0.X format  |
+| `INVALID_SIGNATURE`          | Key mismatch          | Check private key |
+| `TOKEN_NOT_ASSOCIATED`       | Need association      | Associate first   |
+| `ACCOUNT_FROZEN_FOR_TOKEN`   | Account frozen        | Unfreeze account  |
+| `INVALID_TOKEN_ID`           | Token doesn't exist   | Verify token ID   |
+| `CONTRACT_REVERT_EXECUTED`   | Contract failed       | Check parameters  |
+| `PAYER_ACCOUNT_NOT_FOUND`    | Account doesn't exist | Create account    |
+
+---
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Use error_explain tool:**
+
+   ```
+   "Explain error INSUFFICIENT_PAYER_BALANCE"
+   ```
+
+2. **Check GitHub Issues:**
+   [github.com/justmert/hashpilot/issues](https://github.com/justmert/hashpilot/issues)
+
+3. **Hedera Discord:**
+   [hedera.com/discord](https://hedera.com/discord)
+
+4. **Hedera Documentation:**
+   [docs.hedera.com](https://docs.hedera.com)

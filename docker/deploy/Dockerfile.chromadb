@@ -1,0 +1,7 @@
+# ChromaDB with curl for health checks
+# Extends official image to add HTTP client for Docker health checks
+
+FROM chromadb/chroma:latest
+
+# Add curl for health checks (official image is minimal, has no HTTP client)
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*

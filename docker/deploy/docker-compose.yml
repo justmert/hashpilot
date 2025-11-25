@@ -1,0 +1,98 @@
+# HashPilot RAG System - Production Deployment
+# AWS EC2 ARM64 Compatible
+# Domain: chroma.hash-pilot.app
+#
+# NOTE: Firecrawl runs separately using official self-host setup.
+# Clone and run: https://github.com/mendableai/firecrawl
+
+services:
+  # ============================================
+  # ChromaDB - Vector Database
+  # ============================================
+  chromadb:
+    build:
+      context: .
+      dockerfile: Dockerfile.chromadb
+    container_name: hashpilot-chromadb
+    restart: unless-stopped
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma-data:/chroma/chroma
+    networks:
+      - rag-network
+      - proxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # HTTPS Router
+      - "traefik.http.routers.hashpilot-chroma.rule=Host(`${DOMAIN:-chroma.hash-pilot.app}`)"
+      - "traefik.http.routers.hashpilot-chroma.entrypoints=websecure"
+      - "traefik.http.routers.hashpilot-chroma.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hashpilot-chroma.loadbalancer.server.port=8000"
+      # CORS Middleware
+      - "traefik.http.middlewares.hashpilot-chroma-cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS"
+      - "traefik.http.middlewares.hashpilot-chroma-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.hashpilot-chroma-cors.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.hashpilot-chroma-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.hashpilot-chroma-cors.headers.addvaryheader=true"
+      - "traefik.http.routers.hashpilot-chroma.middlewares=hashpilot-chroma-cors"
+
+  # ============================================
+  # RAG Indexer Service
+  # ============================================
+  rag-indexer:
+    build:
+      context: ../..
+      dockerfile: docker/deploy/Dockerfile.indexer
+    container_name: hashpilot-rag-indexer
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHROMA_URL=http://chromadb:8000
+      - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN}
+      # Firecrawl runs separately - use Docker host IP to reach it
+      - FIRECRAWL_URL=${FIRECRAWL_URL:-http://172.17.0.1:3002}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - indexer-cache:/app/cache
+    networks:
+      - rag-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  proxy:
+    external: true
+  rag-network:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  chroma-data:
+    driver: local
+  indexer-cache:
+    driver: local

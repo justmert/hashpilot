@@ -1,0 +1,76 @@
+---
+title: HashPilot
+description: AI-powered MCP server for Hedera blockchain development
+---
+
+HashPilot is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that integrates with AI assistants like Claude Desktop, Cursor, Windsurf, and VS Code to provide a complete toolkit for Hedera blockchain development.
+
+## What is HashPilot?
+
+HashPilot bridges the gap between AI assistants and Hedera blockchain development. Instead of manually writing SDK code or consulting documentation, you can simply ask your AI assistant to:
+
+- Create accounts and transfer HBAR
+- Deploy and interact with smart contracts
+- Manage tokens (HTS) and consensus messages (HCS)
+- Search Hedera documentation with AI-powered RAG
+- Generate code from natural language descriptions
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Account Management" icon="user">
+    Create accounts, query balances, transfer HBAR
+  </Card>
+  <Card title="Token Operations" icon="coins">
+    Create, mint, transfer, freeze tokens (HTS)
+  </Card>
+  <Card title="Smart Contracts" icon="file-code">
+    Deploy via Hardhat or Foundry, verify on HashScan
+  </Card>
+  <Card title="RAG Documentation" icon="book">
+    AI-powered search across 10,000+ indexed docs
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+```bash
+npm install -g hashpilot
+```
+
+Then configure your AI editor - see the [Installation Guide](/installation) for detailed setup instructions.
+
+## Example Usage
+
+Once configured, simply ask your AI assistant:
+
+> "Create a new Hedera account with 10 HBAR"
+
+> "Deploy this Solidity contract to testnet"
+
+> "Search the docs for how to create an NFT"
+
+> "Generate code to transfer tokens between accounts"
+
+## Requirements
+
+- **Node.js** 18.0.0 or higher
+- **Hedera Account** - Get free testnet account at [portal.hedera.com](https://portal.hedera.com)
+- **OpenAI API Key** - Required for RAG features (documentation search, code generation)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up HashPilot with your AI editor
+  </Card>
+  <Card title="Features" icon="list" href="/features">
+    Explore all available capabilities
+  </Card>
+  <Card title="Tool Reference" icon="wrench" href="/tools">
+    Complete API documentation
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "HashPilot",
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373",
+    "anchors": {
+      "from": "#0D9373",
+      "to": "#07C983"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/justmert/hashpilot"
+    },
+    {
+      "name": "npm",
+      "url": "https://www.npmjs.com/package/hashpilot"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/installation"
+  },
+  "anchors": [
+    {
+      "name": "Hedera Docs",
+      "icon": "book-open-cover",
+      "url": "https://docs.hedera.com"
+    },
+    {
+      "name": "Discord",
+      "icon": "discord",
+      "url": "https://hedera.com/discord"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Documentation",
+      "pages": [
+        "introduction",
+        "installation",
+        "features",
+        "tools",
+        "troubleshooting"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/justmert/hashpilot",
+    "discord": "https://hedera.com/discord",
+    "twitter": "https://twitter.com/hedera"
+  }
+}

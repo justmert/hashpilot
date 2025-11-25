@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+*.js.map
+*.d.ts.map
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Hedera specific
+.hedera/
+hedera-state.json
+accounts.json
+state.json
+backups/
+
+# Smart contracts
+contracts/
+artifacts/
+cache/
+
+# ChromaDB
+chroma_data/
+*.chromadb/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# OS
+Thumbs.db
+.DS_Store
+addressbook.json
