@@ -5,7 +5,11 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { foundryService } from '../services/foundry-service.js';
+
+const execFileAsync = promisify(execFile);
 import logger from '../utils/logger.js';
 import { ToolResult } from '../types/index.js';
 import {
@@ -76,7 +80,29 @@ export async function foundryInit(args: {
     const remappingsContent = generateRemappings();
     await fs.writeFile(path.join(directory, 'remappings.txt'), remappingsContent);
 
-    logger.info('Foundry project initialized successfully', { directory });
+    // forge install needs a git repository, and the generated sources import forge-std
+    const setup: string[] = [];
+    try {
+      await fs.access(path.join(directory, '.git'));
+    } catch {
+      await execFileAsync('git', ['init', '-q'], { cwd: directory });
+      setup.push('git init');
+    }
+
+    let forgeStdInstalled = false;
+    try {
+      await fs.access(path.join(directory, 'lib', 'forge-std', 'src', 'Test.sol'));
+      forgeStdInstalled = true;
+    } catch {
+      forgeStdInstalled = await foundryService.install('foundry-rs/forge-std', directory);
+      if (forgeStdInstalled) setup.push('forge install foundry-rs/forge-std');
+    }
+
+    logger.info('Foundry project initialized successfully', {
+      directory,
+      setup,
+      forgeStdInstalled,
+    });
 
     return {
       success: true,
@@ -93,11 +119,15 @@ export async function foundryInit(args: {
           'README.md',
           'remappings.txt',
         ],
+        setup,
+        forgeStdInstalled,
         nextSteps: [
           '1. Copy .env.example to .env and add your private keys',
-          '2. Run: forge install foundry-rs/forge-std',
-          '3. Run: forge build',
-          '4. Run: forge test',
+          ...(forgeStdInstalled
+            ? []
+            : ['2. Run: forge install foundry-rs/forge-std (automatic install failed)']),
+          `${forgeStdInstalled ? 2 : 3}. Run: forge build`,
+          `${forgeStdInstalled ? 3 : 4}. Run: forge test`,
         ],
       },
       metadata: {
@@ -121,16 +151,21 @@ export async function foundryInit(args: {
 /**
  * 2. Install dependency
  */
-export async function foundryInstall(args: { dependency: string }): Promise<ToolResult> {
+export async function foundryInstall(args: {
+  dependency: string;
+  directory?: string;
+}): Promise<ToolResult> {
   try {
     logger.info('Installing dependency', { dependency: args.dependency });
 
-    const success = await foundryService.install(args.dependency);
+    const success = await foundryService.install(args.dependency, args.directory);
 
     return {
       success,
       data: {
-        message: success ? `Dependency ${args.dependency} installed successfully` : 'Installation failed',
+        message: success
+          ? `Dependency ${args.dependency} installed successfully`
+          : 'Installation failed',
         dependency: args.dependency,
       },
       metadata: {
@@ -154,11 +189,11 @@ export async function foundryInstall(args: { dependency: string }): Promise<Tool
 /**
  * 3. Update dependencies
  */
-export async function foundryUpdate(): Promise<ToolResult> {
+export async function foundryUpdate(args: { directory?: string } = {}): Promise<ToolResult> {
   try {
     logger.info('Updating dependencies');
 
-    const success = await foundryService.update();
+    const success = await foundryService.update(args.directory);
 
     return {
       success,
@@ -186,11 +221,14 @@ export async function foundryUpdate(): Promise<ToolResult> {
 /**
  * 4. Remove dependency
  */
-export async function foundryRemove(args: { dependency: string }): Promise<ToolResult> {
+export async function foundryRemove(args: {
+  dependency: string;
+  directory?: string;
+}): Promise<ToolResult> {
   try {
     logger.info('Removing dependency', { dependency: args.dependency });
 
-    const success = await foundryService.remove(args.dependency);
+    const success = await foundryService.remove(args.dependency, args.directory);
 
     return {
       success,
@@ -261,12 +299,15 @@ export async function foundryBuild(args: {
   try {
     logger.info('Building contracts', args);
 
-    const result = await foundryService.build({
-      force: args.force,
-      optimize: args.optimize,
-      optimizerRuns: args.optimizerRuns,
-      via_ir: args.viaIr,
-    }, args.directory);
+    const result = await foundryService.build(
+      {
+        force: args.force,
+        optimize: args.optimize,
+        optimizerRuns: args.optimizerRuns,
+        via_ir: args.viaIr,
+      },
+      args.directory
+    );
 
     if (result.success) {
       return {
@@ -341,11 +382,12 @@ export async function foundryFmt(args: { directory?: string } = {}): Promise<Too
 export async function foundryInspect(args: {
   contractName: string;
   field: 'abi' | 'bytecode' | 'deployedBytecode' | 'assembly' | 'storage-layout' | 'methods';
+  directory?: string;
 }): Promise<ToolResult> {
   try {
     logger.info('Inspecting contract', args);
 
-    const result = await foundryService.inspect(args.contractName, args.field);
+    const result = await foundryService.inspect(args.contractName, args.field, args.directory);
 
     return {
       success: true,
@@ -386,13 +428,16 @@ export async function foundryTest(args: {
   try {
     logger.info('Running tests', args);
 
-    const result = await foundryService.test({
-      matchTest: args.matchTest,
-      matchContract: args.matchContract,
-      forkUrl: args.forkUrl,
-      gasReport: args.gasReport,
-      verbosity: args.verbosity,
-    }, args.directory);
+    const result = await foundryService.test(
+      {
+        matchTest: args.matchTest,
+        matchContract: args.matchContract,
+        forkUrl: args.forkUrl,
+        gasReport: args.gasReport,
+        verbosity: args.verbosity,
+      },
+      args.directory
+    );
 
     return {
       success: result.success,
@@ -582,9 +627,15 @@ export async function foundryScript(args: {
 /**
  * 13. Get compiled artifacts
  */
-export async function foundryGetArtifacts(args: { contractName?: string; directory?: string }): Promise<ToolResult> {
+export async function foundryGetArtifacts(args: {
+  contractName?: string;
+  directory?: string;
+}): Promise<ToolResult> {
   try {
-    logger.info('Getting artifacts', { contractName: args.contractName, directory: args.directory });
+    logger.info('Getting artifacts', {
+      contractName: args.contractName,
+      directory: args.directory,
+    });
 
     const artifacts = await foundryService.getArtifacts(args.contractName, args.directory);
 
@@ -663,20 +714,27 @@ export async function foundrySend(args: {
   address: string;
   signature: string;
   args?: string[];
-  rpcUrl: string;
-  privateKey: string;
+  rpcUrl?: string;
+  privateKey?: string;
+  network?: string;
   value?: string;
   gasLimit?: number;
 }): Promise<ToolResult> {
   try {
     logger.info('Sending transaction', { address: args.address, signature: args.signature });
 
+    // Auto-resolve the signer and endpoint from the MCP operator config, so a
+    // caller that omits them does not end up with `--private-key undefined`.
+    const { resolvePrivateKey, getRpcUrl } = await import('../utils/key-converter.js');
+    const privateKey = resolvePrivateKey(args.privateKey);
+    const rpcUrl = args.rpcUrl || getRpcUrl(args.network);
+
     const result = await foundryService.send({
       address: args.address,
       signature: args.signature,
       args: args.args,
-      rpcUrl: args.rpcUrl,
-      privateKey: args.privateKey,
+      rpcUrl,
+      privateKey,
       value: args.value,
       gasLimit: args.gasLimit,
     });
@@ -712,6 +770,7 @@ export async function foundryAnvilStart(args: {
   port?: number;
   forkUrl?: string;
   chainId?: number;
+  forkBlock?: number;
 }): Promise<ToolResult> {
   try {
     logger.info('Starting Anvil', args);
@@ -720,6 +779,7 @@ export async function foundryAnvilStart(args: {
       port: args.port,
       forkUrl: args.forkUrl,
       chainId: args.chainId,
+      forkBlock: args.forkBlock,
     });
 
     return {
@@ -1030,7 +1090,8 @@ export const foundryTools = [
   },
   {
     name: 'foundry_get_artifacts',
-    description: 'Get compiled contract artifacts including ABI, bytecode, and metadata from out/ directory.',
+    description:
+      'Get compiled contract artifacts including ABI, bytecode, and metadata from out/ directory.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1054,7 +1115,8 @@ export const foundryTools = [
         },
         signature: {
           type: 'string',
-          description: 'Function signature (e.g., "greet()(string)" or "balanceOf(address)(uint256)")',
+          description:
+            'Function signature (e.g., "greet()(string)" or "balanceOf(address)(uint256)")',
         },
         args: {
           type: 'array',
@@ -1087,7 +1149,8 @@ export const foundryTools = [
         },
         signature: {
           type: 'string',
-          description: 'Function signature (e.g., "setGreeting(string)" or "transfer(address,uint256)")',
+          description:
+            'Function signature (e.g., "setGreeting(string)" or "transfer(address,uint256)")',
         },
         args: {
           type: 'array',

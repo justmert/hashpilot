@@ -7,6 +7,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { advisoriesFor } from '../services/error-analyzer.js';
 import { deploymentService, DeploymentRecord } from '../services/deployment-service.js';
 import { hashScanService, HederaNetwork } from '../services/hashscan-service.js';
 
@@ -73,6 +74,10 @@ export async function deployContract(args: {
         metadata: {
           executedVia: result.record.framework,
           command: 'deploy_contract',
+          advisories: advisoriesFor('deploy_contract', {
+            network: result.record.network,
+            verify: args.verify,
+          }),
         },
       };
     } else {
@@ -319,7 +324,7 @@ export async function deploymentStatus(args: {
       try {
         const verificationStatus = await hashScanService.checkVerificationStatus(
           record.contractAddress,
-          record.network,
+          record.network
         );
         data.currentVerificationStatus = verificationStatus;
         data.hashScanUrl = hashScanService.getContractUrl(record.contractAddress, record.network);
@@ -394,7 +399,9 @@ export async function deploymentReport(args: {
     // TODO: If outputPath, write to file
 
     if (format === 'json') {
-      const records = deploymentIds.map((id) => deploymentService.getDeploymentById(id)).filter((r) => r !== null);
+      const records = deploymentIds
+        .map((id) => deploymentService.getDeploymentById(id))
+        .filter((r) => r !== null);
       data.deployments = records;
     } else if (format === 'html') {
       data.html = convertMarkdownToHtml(report);
@@ -444,10 +451,14 @@ export async function contractInfo(args: {
 
     // Get verification status
     try {
-      const verificationStatus = await hashScanService.checkVerificationStatus(args.address, args.network);
+      const verificationStatus = await hashScanService.checkVerificationStatus(
+        args.address,
+        args.network
+      );
       data.verification = {
         status: verificationStatus.status,
-        isVerified: verificationStatus.status === 'perfect' || verificationStatus.status === 'partial',
+        isVerified:
+          verificationStatus.status === 'perfect' || verificationStatus.status === 'partial',
         libraryMap: verificationStatus.libraryMap,
       };
     } catch (error) {
@@ -557,7 +568,7 @@ function convertToMarkdown(records: DeploymentRecord[]): string {
  */
 function convertMarkdownToHtml(markdown: string): string {
   // Basic markdown to HTML conversion
-  let html = markdown
+  const html = markdown
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')

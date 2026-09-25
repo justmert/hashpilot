@@ -12,8 +12,8 @@ import { logger } from '../utils/logger.js';
 import { hardhatService } from './hardhat-service.js';
 import { foundryService } from './foundry-service.js';
 // import { jsonRpcService } from './json-rpc-service.js'; // TODO: Uncomment when direct RPC deployment is implemented
-import { hashScanService, HederaNetwork } from './hashscan-service.js';
-import * as os from 'os';
+import { hashScanService, HederaNetwork, isSourcifySupported } from './hashscan-service.js';
+import { getDataDir } from '../utils/data-dir.js';
 
 /**
  * Supported deployment frameworks
@@ -94,9 +94,8 @@ export class DeploymentService {
   private deploymentHistory: DeploymentRecord[] = [];
 
   constructor() {
-    // Use .hedera-mcp directory in user's home
-    const dataDir = path.join(os.homedir(), '.hedera-mcp');
-    this.deploymentHistoryFile = path.join(dataDir, 'deployments.json');
+    // Shared data directory (~/.hedera-mcp or HASHPILOT_DATA_DIR)
+    this.deploymentHistoryFile = path.join(getDataDir(), 'deployments.json');
     this.loadDeploymentHistory();
   }
 
@@ -120,7 +119,11 @@ export class DeploymentService {
    */
   private async saveDeploymentHistory(): Promise<void> {
     try {
-      await fs.writeFile(this.deploymentHistoryFile, JSON.stringify(this.deploymentHistory, null, 2), 'utf-8');
+      await fs.writeFile(
+        this.deploymentHistoryFile,
+        JSON.stringify(this.deploymentHistory, null, 2),
+        'utf-8'
+      );
       logger.debug('Deployment history saved', { count: this.deploymentHistory.length });
     } catch (error: any) {
       logger.error('Failed to save deployment history', { error: error.message });
@@ -272,11 +275,28 @@ export class DeploymentService {
   /**
    * Deploy contract using Hardhat
    */
-  private async deployWithHardhat(_options: DeploymentOptions): Promise<any> {
+  private async deployWithHardhat(options: DeploymentOptions): Promise<any> {
     try {
-      // TODO: Implement Hardhat deployment via hardhat-service
-      // For now, return placeholder
-      throw new Error('Hardhat deployment not yet implemented');
+      // Artifacts come from the project's artifacts/ directory; the
+      // transaction goes through the JSON-RPC relay (no Hardhat runtime).
+      const privateKey =
+        options.privateKey || (await this.getPrivateKeyForAlias(options.fromAlias)) || undefined;
+
+      const result = await hardhatService.deploy({
+        contractName: options.contractName,
+        constructorArgs: options.constructorArgs || [],
+        network: options.network,
+        privateKey,
+        gasLimit: options.gasLimit,
+        value: options.value,
+      });
+
+      return {
+        success: true,
+        address: result.address,
+        transactionHash: result.transactionHash,
+        gasUsed: result.gasUsed ? parseInt(result.gasUsed, 10) : 0,
+      };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -291,7 +311,8 @@ export class DeploymentService {
       const rpcUrl = this.getRpcUrlForNetwork(options.network);
 
       // Get private key
-      const privateKey = options.privateKey || (await this.getPrivateKeyForAlias(options.fromAlias));
+      const privateKey =
+        options.privateKey || (await this.getPrivateKeyForAlias(options.fromAlias));
       if (!privateKey) {
         throw new Error('Private key or fromAlias required for deployment');
       }
@@ -330,39 +351,99 @@ export class DeploymentService {
   }
 
   /**
-   * Verify deployment on HashScan
+   * Verify a deployment on Sourcify, which is what HashScan reads its badge from.
+   *
+   * Uses the build output rather than raw sources so the exact compiler settings are
+   * submitted: the Foundry artifact for `forge` projects, the newest Hardhat build-info
+   * for `hardhat` projects.
    */
-  private async verifyDeployment(record: DeploymentRecord, framework: DeploymentFramework): Promise<boolean> {
+  private async verifyDeployment(
+    record: DeploymentRecord,
+    framework: DeploymentFramework
+  ): Promise<boolean> {
     try {
-      if (framework === 'foundry') {
-        // Get Foundry artifact
-        const artifactPath = `out/${record.contractName}.sol/${record.contractName}.json`;
-        const artifact = await hashScanService.readFoundryArtifact(artifactPath);
-
-        // Get contract source
-        const sourcePath = `src/${record.contractName}.sol`;
-        const sourceCode = await fs.readFile(sourcePath, 'utf-8');
-
-        // Verify with HashScan
-        const result = await hashScanService.verifyContract(
-          record.contractAddress,
-          record.network,
-          {
-            [`${record.contractName}.sol`]: sourceCode,
-            'metadata.json': artifact.metadata,
-          },
-          record.transactionHash,
-          record.contractName,
-        );
-
-        return result.success && result.status === 'perfect';
+      if (!isSourcifySupported(record.network)) {
+        logger.warn('Skipping verification: Sourcify does not support this network', {
+          network: record.network,
+          address: record.contractAddress,
+        });
+        return false;
       }
 
-      // TODO: Implement verification for other frameworks
-      return false;
+      let artifactPath: string | undefined;
+      let buildInfoPath: string | undefined;
+
+      if (framework === 'foundry') {
+        artifactPath = path.join(
+          'out',
+          `${record.contractName}.sol`,
+          `${record.contractName}.json`
+        );
+      } else if (framework === 'hardhat') {
+        buildInfoPath = await this.findLatestBuildInfo();
+        if (!buildInfoPath) {
+          logger.warn('Skipping verification: no Hardhat build-info found', {
+            contractName: record.contractName,
+          });
+          return false;
+        }
+      } else {
+        logger.warn('Skipping verification: no build output for this framework', { framework });
+        return false;
+      }
+
+      const result = await hashScanService.verifyContract({
+        address: record.contractAddress,
+        network: record.network,
+        contractName: record.contractName,
+        artifactPath,
+        buildInfoPath,
+        creatorTxHash: record.transactionHash,
+      });
+
+      if (!result.success) {
+        logger.warn('Contract verification did not succeed', {
+          address: record.contractAddress,
+          reason: result.message,
+          sourcifyCode: result.customCode,
+        });
+        return false;
+      }
+
+      logger.info('Contract verified on Sourcify', {
+        address: record.contractAddress,
+        status: result.status,
+      });
+
+      // A partial match still counts as verified; only the metadata hash differs.
+      return true;
     } catch (error: any) {
       logger.error('Verification failed', { error: error.message });
       return false;
+    }
+  }
+
+  /**
+   * Newest file under artifacts/build-info, which is where Hardhat writes the full
+   * standard JSON input for the last compilation.
+   */
+  private async findLatestBuildInfo(): Promise<string | undefined> {
+    const buildInfoDir = path.join('artifacts', 'build-info');
+    try {
+      const entries = await fs.readdir(buildInfoDir);
+      const candidates = entries.filter((name) => name.endsWith('.json'));
+      if (candidates.length === 0) return undefined;
+
+      const stats = await Promise.all(
+        candidates.map(async (name) => {
+          const full = path.join(buildInfoDir, name);
+          return { full, mtime: (await fs.stat(full)).mtimeMs };
+        })
+      );
+      stats.sort((a, b) => b.mtime - a.mtime);
+      return stats[0].full;
+    } catch {
+      return undefined;
     }
   }
 
@@ -382,7 +463,11 @@ export class DeploymentService {
         const { name, constructorArgs, dependsOn } = contractConfig;
 
         // Replace dependency placeholders in constructor args
-        const resolvedArgs = this.resolveDependencies(constructorArgs || [], dependsOn || [], deployedAddresses);
+        const resolvedArgs = this.resolveDependencies(
+          constructorArgs || [],
+          dependsOn || [],
+          deployedAddresses
+        );
 
         // Deploy contract
         const result = await this.deployContract({
@@ -414,7 +499,9 @@ export class DeploymentService {
   /**
    * Build dependency graph (topological sort)
    */
-  private buildDependencyGraph(contracts: DeploymentPlan['contracts']): DeploymentPlan['contracts'] {
+  private buildDependencyGraph(
+    contracts: DeploymentPlan['contracts']
+  ): DeploymentPlan['contracts'] {
     // Simple topological sort based on dependsOn
     const sorted: typeof contracts = [];
     const visited = new Set<string>();
@@ -459,7 +546,7 @@ export class DeploymentService {
   private resolveDependencies(
     args: any[],
     _dependsOn: string[],
-    deployedAddresses: Map<string, string>,
+    deployedAddresses: Map<string, string>
   ): any[] {
     return args.map((arg) => {
       if (typeof arg === 'string' && arg.startsWith('$')) {
@@ -520,7 +607,7 @@ export class DeploymentService {
   getDeploymentByAddress(address: string, network: HederaNetwork): DeploymentRecord | null {
     return (
       this.deploymentHistory.find(
-        (r) => r.contractAddress.toLowerCase() === address.toLowerCase() && r.network === network,
+        (r) => r.contractAddress.toLowerCase() === address.toLowerCase() && r.network === network
       ) || null
     );
   }
@@ -558,7 +645,9 @@ export class DeploymentService {
    * Generate deployment report
    */
   generateDeploymentReport(deploymentIds: string[]): string {
-    const deployments = deploymentIds.map((id) => this.getDeploymentById(id)).filter((d) => d !== null);
+    const deployments = deploymentIds
+      .map((id) => this.getDeploymentById(id))
+      .filter((d) => d !== null);
 
     if (deployments.length === 0) {
       return 'No deployments found';
@@ -569,16 +658,16 @@ export class DeploymentService {
     report += `Total Deployments: ${deployments.length}\n\n`;
 
     for (const deployment of deployments) {
-      report += `## ${deployment!.contractName}\n\n`;
-      report += `- **Network:** ${deployment!.network}\n`;
-      report += `- **Address:** ${deployment!.contractAddress}\n`;
-      report += `- **Status:** ${deployment!.status}\n`;
-      report += `- **Transaction:** ${deployment!.transactionHash}\n`;
-      report += `- **Gas Used:** ${deployment!.gasUsed}\n`;
-      report += `- **Deployed At:** ${deployment!.deployedAt}\n`;
-      report += `- **Verification:** ${deployment!.verificationStatus}\n`;
-      if (deployment!.hashScanUrl) {
-        report += `- **HashScan:** ${deployment!.hashScanUrl}\n`;
+      report += `## ${deployment.contractName}\n\n`;
+      report += `- **Network:** ${deployment.network}\n`;
+      report += `- **Address:** ${deployment.contractAddress}\n`;
+      report += `- **Status:** ${deployment.status}\n`;
+      report += `- **Transaction:** ${deployment.transactionHash}\n`;
+      report += `- **Gas Used:** ${deployment.gasUsed}\n`;
+      report += `- **Deployed At:** ${deployment.deployedAt}\n`;
+      report += `- **Verification:** ${deployment.verificationStatus}\n`;
+      if (deployment.hashScanUrl) {
+        report += `- **HashScan:** ${deployment.hashScanUrl}\n`;
       }
       report += '\n';
     }

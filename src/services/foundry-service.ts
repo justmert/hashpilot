@@ -193,7 +193,9 @@ export class FoundryService {
       execSync('forge --version', { env, stdio: 'pipe' });
       return true;
     } catch (error) {
-      logger.error('Foundry not installed. Install via: curl -L https://foundry.paradigm.xyz | bash');
+      logger.error(
+        'Foundry not installed. Install via: curl -L https://foundry.paradigm.xyz | bash'
+      );
       return false;
     }
   }
@@ -225,7 +227,10 @@ export class FoundryService {
       });
       return output;
     } catch (error: any) {
-      logger.error('Forge command failed', { error: error.message, stderr: error.stderr?.toString() });
+      logger.error('Forge command failed', {
+        error: error.message,
+        stderr: error.stderr?.toString(),
+      });
       throw new Error(error.stderr?.toString() || error.message);
     }
   }
@@ -257,7 +262,10 @@ export class FoundryService {
       });
       return output;
     } catch (error: any) {
-      logger.error('Cast command failed', { error: error.message, stderr: error.stderr?.toString() });
+      logger.error('Cast command failed', {
+        error: error.message,
+        stderr: error.stderr?.toString(),
+      });
       throw new Error(error.stderr?.toString() || error.message);
     }
   }
@@ -289,23 +297,32 @@ export class FoundryService {
         args.push('--via-ir');
       }
 
-      const output = await this.executeForgeCommand(args, { cwd: directory || this.projectRoot || undefined });
+      const output = await this.executeForgeCommand(args, {
+        cwd: directory || this.projectRoot || undefined,
+      });
 
-      // Parse output to find compiled contracts
-      const artifacts: string[] = [];
-      const lines = output.split('\n');
-      for (const line of lines) {
-        if (line.includes('Compiler run successful')) {
-          return {
-            success: true,
-            artifacts,
-          };
-        }
+      // forge prints only a summary line; list the artifacts it wrote instead
+      const warnings = output
+        .split('\n')
+        .filter((line) => /^warning/i.test(line.trim()))
+        .map((line) => line.trim());
+
+      let artifacts: string[] = [];
+      try {
+        const projectRoot = directory || this.projectRoot || process.cwd();
+        artifacts = (await this.getArtifacts(undefined, projectRoot))
+          .map((a) => a.contractName)
+          .filter(
+            (name) => !/^(Std|Vm|Test|Script|Base|IMulticall3|console|safeconsole)/.test(name)
+          );
+      } catch {
+        // out/ missing means nothing compiled; leave the list empty
       }
 
       return {
         success: true,
         artifacts,
+        warnings: warnings.length ? warnings : undefined,
       };
     } catch (error: any) {
       return {
@@ -347,7 +364,9 @@ export class FoundryService {
         args.push('-' + 'v'.repeat(options.verbosity));
       }
 
-      const output = await this.executeForgeCommand(args, { cwd: directory || this.projectRoot || undefined });
+      const output = await this.executeForgeCommand(args, {
+        cwd: directory || this.projectRoot || undefined,
+      });
 
       // Parse test results
       const result: TestResult = {
@@ -361,7 +380,9 @@ export class FoundryService {
       const lines = output.split('\n');
       for (const line of lines) {
         // New forge output format: "Ran X test suite(s) in ...: Y tests passed, Z failed, W skipped (N total tests)"
-        const newFormatMatch = line.match(/(\d+) tests passed, (\d+) failed, (\d+) skipped \((\d+) total tests\)/);
+        const newFormatMatch = line.match(
+          /(\d+) tests passed, (\d+) failed, (\d+) skipped \((\d+) total tests\)/
+        );
         if (newFormatMatch) {
           result.passed = parseInt(newFormatMatch[1], 10);
           result.failed = parseInt(newFormatMatch[2], 10);
@@ -406,7 +427,9 @@ export class FoundryService {
       if (directory) {
         await this.detectFoundryProject(directory);
       }
-      await this.executeForgeCommand(['clean'], { cwd: directory || this.projectRoot || undefined });
+      await this.executeForgeCommand(['clean'], {
+        cwd: directory || this.projectRoot || undefined,
+      });
       return true;
     } catch (error) {
       logger.error('Failed to clean artifacts', { error });
@@ -438,7 +461,9 @@ export class FoundryService {
       if (directory) {
         await this.detectFoundryProject(directory);
       }
-      await this.executeForgeCommand(['snapshot'], { cwd: directory || this.projectRoot || undefined });
+      await this.executeForgeCommand(['snapshot'], {
+        cwd: directory || this.projectRoot || undefined,
+      });
 
       return {
         success: true,
@@ -468,27 +493,27 @@ export class FoundryService {
 
     const artifacts: ArtifactInfo[] = [];
 
-    // Read all directories in out/
-    const contracts = await fs.readdir(outDir);
+    // forge writes out/<Source>.sol/<Contract>.json, one JSON per contract in the source file
+    const sourceDirs = await fs.readdir(outDir);
 
-    for (const contract of contracts) {
-      const contractDir = path.join(outDir, contract);
-      const stat = await fs.stat(contractDir);
-
+    for (const sourceDir of sourceDirs) {
+      if (sourceDir === 'build-info') continue;
+      const fullDir = path.join(outDir, sourceDir);
+      const stat = await fs.stat(fullDir);
       if (!stat.isDirectory()) continue;
 
-      // Skip if contractName specified and doesn't match
-      if (contractName && !contract.includes(contractName)) continue;
+      const files = (await fs.readdir(fullDir)).filter((f) => f.endsWith('.json'));
+      for (const file of files) {
+        const name = file.replace(/\.json$/, '');
 
-      // Read the .json artifact file
-      const jsonFile = path.join(contractDir, `${contract}.json`);
+        // Skip if contractName specified and doesn't match the contract or its source file
+        if (contractName && name !== contractName && !sourceDir.includes(contractName)) continue;
 
-      if (existsSync(jsonFile)) {
-        const content = await fs.readFile(jsonFile, 'utf-8');
+        const content = await fs.readFile(path.join(fullDir, file), 'utf-8');
         const artifact = JSON.parse(content);
 
         artifacts.push({
-          contractName: contract.replace('.sol', ''),
+          contractName: name,
           abi: artifact.abi || [],
           bytecode: artifact.bytecode?.object || '',
           deployedBytecode: artifact.deployedBytecode?.object || '',
@@ -648,11 +673,13 @@ export class FoundryService {
   /**
    * Install dependency
    */
-  async install(dependency: string): Promise<boolean> {
+  async install(dependency: string, directory?: string): Promise<boolean> {
     try {
       // Note: --no-commit flag removed in Foundry 1.4.4+
       // Git repo must be initialized before running forge install
-      await this.executeForgeCommand(['install', dependency]);
+      await this.executeForgeCommand(['install', dependency], {
+        cwd: directory || this.projectRoot || undefined,
+      });
       return true;
     } catch (error) {
       logger.error('Failed to install dependency', { error });
@@ -663,9 +690,11 @@ export class FoundryService {
   /**
    * Update dependencies
    */
-  async update(): Promise<boolean> {
+  async update(directory?: string): Promise<boolean> {
     try {
-      await this.executeForgeCommand(['update']);
+      await this.executeForgeCommand(['update'], {
+        cwd: directory || this.projectRoot || undefined,
+      });
       return true;
     } catch (error) {
       logger.error('Failed to update dependencies', { error });
@@ -676,9 +705,11 @@ export class FoundryService {
   /**
    * Remove dependency
    */
-  async remove(dependency: string): Promise<boolean> {
+  async remove(dependency: string, directory?: string): Promise<boolean> {
     try {
-      await this.executeForgeCommand(['remove', dependency]);
+      await this.executeForgeCommand(['remove', dependency], {
+        cwd: directory || this.projectRoot || undefined,
+      });
       return true;
     } catch (error) {
       logger.error('Failed to remove dependency', { error });
@@ -689,9 +720,11 @@ export class FoundryService {
   /**
    * Inspect contract
    */
-  async inspect(contractName: string, field: string): Promise<any> {
+  async inspect(contractName: string, field: string, directory?: string): Promise<any> {
     try {
-      const output = await this.executeForgeCommand(['inspect', contractName, field]);
+      const output = await this.executeForgeCommand(['inspect', contractName, field], {
+        cwd: directory || this.projectRoot || undefined,
+      });
       return JSON.parse(output);
     } catch (error: any) {
       throw new Error(`Inspect failed: ${error.message}`);
@@ -701,7 +734,12 @@ export class FoundryService {
   /**
    * Start Anvil local node
    */
-  async startAnvil(options?: { port?: number; forkUrl?: string; chainId?: number }): Promise<boolean> {
+  async startAnvil(options?: {
+    port?: number;
+    forkUrl?: string;
+    chainId?: number;
+    forkBlock?: number;
+  }): Promise<boolean> {
     try {
       const args: string[] = [];
 
@@ -715,6 +753,10 @@ export class FoundryService {
 
       if (options?.chainId) {
         args.push('--chain-id', options.chainId.toString());
+      }
+
+      if (options?.forkBlock) {
+        args.push('--fork-block-number', options.forkBlock.toString());
       }
 
       // Add Foundry bin directory to PATH for Node.js child_process

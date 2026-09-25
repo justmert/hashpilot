@@ -65,9 +65,9 @@ export function generateHederaFoundryConfig(options: {
     .map((net) => {
       const envPrefix = net.toUpperCase();
 
+      // Keys are passed on the command line (--private-key $ENV), never stored in foundry.toml
       return `[profile.hedera-${net}]
-eth_rpc_url = "\${${envPrefix}_RPC_URL}"
-private_key = "\${${envPrefix}_PRIVATE_KEY}"`;
+eth_rpc_url = "\${${envPrefix}_RPC_URL}"`;
     })
     .join('\n\n');
 
@@ -84,6 +84,8 @@ script = "script"
 cache_path = "cache"
 
 # Solidity compiler settings
+# evm_version stays at "london" for broad compatibility; raise it once you have
+# confirmed the target Hedera release supports the newer opcodes you need.
 solc_version = "${solidity}"
 evm_version = "london"
 optimizer = ${optimizer}
@@ -109,10 +111,9 @@ ${rpcEndpoints}
 # Network profiles
 ${networkProfiles}
 
-# Etherscan verification (HashScan)
-[etherscan]
-hedera-testnet = { key = "\${HASHSCAN_API_KEY}", url = "https://hashscan.io/testnet/" }
-hedera-mainnet = { key = "\${HASHSCAN_API_KEY}", url = "https://hashscan.io/mainnet/" }
+# Verification: HashScan reads from Sourcify (no API key needed).
+#   forge verify-contract --verifier sourcify --chain-id 296 <ADDRESS> src/Greeter.sol:Greeter
+# Chain IDs: mainnet 295, testnet 296. Previewnet is not supported by Sourcify.
 `;
 
   return config;
@@ -141,8 +142,7 @@ ${envPrefix}_PRIVATE_KEY=0x00000000000000000000000000000000000000000000000000000
 
 ${envVars}
 
-# HashScan API Key (for contract verification)
-HASHSCAN_API_KEY=your-api-key-here
+# Contract verification goes through Sourcify (used by HashScan); no API key is required.
 `;
 }
 
@@ -351,10 +351,10 @@ forge test -vvv
 
 \`\`\`bash
 # Deploy to Hedera testnet
-forge script script/Deploy.s.sol --rpc-url hedera-testnet --broadcast
+forge script script/Deploy.s.sol --rpc-url hedera-testnet --broadcast --private-key $TESTNET_PRIVATE_KEY
 
-# Verify contract on HashScan
-forge verify-contract <CONTRACT_ADDRESS> src/Greeter.sol:Greeter --chain hedera-testnet
+# Verify contract (HashScan reads verification from Sourcify; chain 296 = testnet, 295 = mainnet)
+forge verify-contract --verifier sourcify --chain-id 296 <CONTRACT_ADDRESS> src/Greeter.sol:Greeter
 \`\`\`
 
 ### Interact

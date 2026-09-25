@@ -1,113 +1,196 @@
 /**
  * Hardhat Tools for MCP
- * Provides 15 tools for Hardhat development on Hedera
+ *
+ * Implements the operations behind the `hardhat_project` and
+ * `hardhat_contract` composite tools. Hardhat itself runs as a child
+ * process from the user's project; contract interaction goes through the
+ * JSON-RPC relay (see services/hardhat-service.ts).
  */
 
 import fs from 'fs/promises';
 import path from 'path';
-import { execSync } from 'child_process';
-import { hardhatService } from '../services/hardhat-service.js';
+import { spawn } from 'child_process';
+import { hardhatService, HardhatCommandError } from '../services/hardhat-service.js';
 import logger from '../utils/logger.js';
 import { ToolResult } from '../types/index.js';
 import {
+  HEDERA_NETWORKS,
+  HARDHAT_SCAFFOLD_PACKAGES,
+  HederaNetworkName,
   generateHederaHardhatConfig,
   generateEnvTemplate,
+  generateNetworkEntry,
   generateSampleContract,
   generateSampleDeployScript,
+  generateSampleIgnitionModule,
   generateSampleTest,
+  generateTsConfig,
   generateGitignore,
   generateReadme,
 } from '../utils/hardhat-config-generator.js';
 
+const HARDHAT_MIN_NODE_MAJOR = 22;
+const NPM_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+
+function metadata(command: string): ToolResult['metadata'] {
+  return { executedVia: 'hardhat', command };
+}
+
+function failure(error: unknown, fallback: string, command: string): ToolResult {
+  const message = error instanceof Error ? error.message : fallback;
+  const data =
+    error instanceof HardhatCommandError
+      ? { exitCode: error.result.exitCode, command: error.result.command }
+      : undefined;
+  return { success: false, error: message, data, metadata: metadata(command) };
+}
+
 /**
- * 1. Initialize Hardhat project
+ * Run a command with piped stdio (never inherit: the MCP transport owns stdout)
+ */
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new Error(`Failed to start ${command}: ${error.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ exitCode: code ?? -1, stdout, stderr });
+    });
+  });
+}
+
+/**
+ * 1. Initialize Hardhat project (Hardhat 3 scaffold for Hedera)
  */
 export async function hardhatInit(args: {
   directory?: string;
-  networks?: Array<'mainnet' | 'testnet' | 'previewnet' | 'local'>;
+  networks?: HederaNetworkName[];
   solidity?: string;
   typescript?: boolean;
+  /** Skip `npm install` (default: false) */
+  skipInstall?: boolean;
 }): Promise<ToolResult> {
+  const command = 'hardhat init';
   try {
-    const directory = args.directory || process.cwd();
+    const directory = path.resolve(args.directory || process.cwd());
     const networks = args.networks || ['testnet', 'local'];
     const solidity = args.solidity || '0.8.20';
     const typescript = args.typescript || false;
+    const ext = typescript ? 'ts' : 'js';
+    const warnings: string[] = [];
 
     logger.info('Initializing Hardhat project', { directory, networks, solidity, typescript });
 
-    // Create directory if it doesn't exist
-    await fs.mkdir(directory, { recursive: true });
-
-    // Create directory structure
-    await fs.mkdir(path.join(directory, 'contracts'), { recursive: true });
-    await fs.mkdir(path.join(directory, 'scripts'), { recursive: true });
-    await fs.mkdir(path.join(directory, 'test'), { recursive: true });
-
-    // Generate hardhat.config file
-    const configContent = generateHederaHardhatConfig({ solidity, networks, typescript });
-    const configFile = typescript ? 'hardhat.config.ts' : 'hardhat.config.js';
-    await fs.writeFile(path.join(directory, configFile), configContent);
-
-    // Generate .env.example
-    const envContent = generateEnvTemplate(networks);
-    await fs.writeFile(path.join(directory, '.env.example'), envContent);
-
-    // Generate sample contract
-    const contractContent = generateSampleContract();
-    await fs.writeFile(path.join(directory, 'contracts', 'Greeter.sol'), contractContent);
-
-    // Generate deployment script
-    const deployScript = generateSampleDeployScript(typescript);
-    const scriptExt = typescript ? 'ts' : 'js';
-    await fs.writeFile(path.join(directory, 'scripts', `deploy.${scriptExt}`), deployScript);
-
-    // Generate test file
-    const testContent = generateSampleTest(typescript);
-    await fs.writeFile(path.join(directory, 'test', `Greeter.test.${scriptExt}`), testContent);
-
-    // Generate .gitignore
-    const gitignoreContent = generateGitignore();
-    await fs.writeFile(path.join(directory, '.gitignore'), gitignoreContent);
-
-    // Generate README
-    const readmeContent = generateReadme();
-    await fs.writeFile(path.join(directory, 'README.md'), readmeContent);
-
-    // Create package.json if it doesn't exist (Hardhat v3 requires ESM)
-    const packageJsonPath = path.join(directory, 'package.json');
-    try {
-      await fs.access(packageJsonPath);
-    } catch {
-      const packageJson = {
-        name: path.basename(directory),
-        version: '1.0.0',
-        type: 'module', // Required for Hardhat v3 ESM
-        description: 'Hedera Hardhat Project',
-        scripts: {
-          compile: 'hardhat compile',
-          test: 'hardhat test',
-          deploy: 'hardhat run scripts/deploy.' + scriptExt,
-        },
-        devDependencies: {},
-      };
-      await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
+    const nodeMajor = Number(process.versions.node.split('.')[0]);
+    if (nodeMajor < HARDHAT_MIN_NODE_MAJOR) {
+      warnings.push(
+        `Hardhat 3 requires Node.js ${HARDHAT_MIN_NODE_MAJOR}+, but this server runs on Node ${process.versions.node}. ` +
+          'Hardhat commands from HashPilot will fail until the server runs on a newer Node.'
+      );
     }
 
-    // Install dependencies (Hardhat v3 with new toolbox package)
-    logger.info('Installing Hardhat dependencies...');
-    const originalCwd = process.cwd();
-    process.chdir(directory);
+    for (const sub of ['contracts', 'scripts', 'test', path.join('ignition', 'modules')]) {
+      await fs.mkdir(path.join(directory, sub), { recursive: true });
+    }
 
+    const configFile = `hardhat.config.${ext}`;
+    const files: Array<[string, string]> = [
+      [configFile, generateHederaHardhatConfig({ solidity, networks, typescript })],
+      ['.env.example', generateEnvTemplate(networks)],
+      ['contracts/Greeter.sol', generateSampleContract()],
+      [`scripts/deploy.${ext}`, generateSampleDeployScript(typescript)],
+      [`test/Greeter.test.${ext}`, generateSampleTest(typescript)],
+      [`ignition/modules/Greeter.${ext}`, generateSampleIgnitionModule()],
+      ['.gitignore', generateGitignore()],
+      ['README.md', generateReadme()],
+    ];
+    if (typescript) {
+      files.push(['tsconfig.json', generateTsConfig()]);
+    }
+    for (const [name, content] of files) {
+      await fs.writeFile(path.join(directory, name), content);
+    }
+
+    // package.json: Hardhat 3 projects must be ESM
+    const packageJsonPath = path.join(directory, 'package.json');
+    let packageJson: Record<string, any>;
     try {
-      execSync(
-        'npm install --save-dev hardhat@^3.0.11 @nomicfoundation/hardhat-toolbox-mocha-ethers@^3.0.1 dotenv',
-        {
-          stdio: 'inherit',
-        }
+      packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+      if (packageJson.type !== 'module') {
+        packageJson.type = 'module';
+        warnings.push('Set "type": "module" in package.json (required by Hardhat 3)');
+      }
+    } catch {
+      packageJson = {
+        name:
+          path
+            .basename(directory)
+            .replace(/[^a-z0-9._-]/gi, '-')
+            .toLowerCase() || 'hedera-hardhat',
+        version: '1.0.0',
+        private: true,
+        type: 'module',
+        description: 'Hedera Hardhat Project',
+        scripts: {},
+        devDependencies: {},
+      };
+    }
+    packageJson.scripts = {
+      compile: 'hardhat compile',
+      test: 'hardhat test',
+      deploy: `hardhat run scripts/deploy.${ext} --network testnet`,
+      ...(packageJson.scripts || {}),
+    };
+    await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
+
+    let install: { ran: boolean; ok: boolean; output?: string } = { ran: false, ok: false };
+    if (!args.skipInstall) {
+      const packages = [
+        HARDHAT_SCAFFOLD_PACKAGES.hardhat,
+        HARDHAT_SCAFFOLD_PACKAGES.toolbox,
+        HARDHAT_SCAFFOLD_PACKAGES.dotenv,
+        ...(typescript ? HARDHAT_SCAFFOLD_PACKAGES.typescript : []),
+      ];
+      logger.info('Installing Hardhat dependencies', { directory, packages });
+      const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+      const result = await runCommand(
+        npm,
+        ['install', '--save-dev', '--no-audit', '--no-fund', ...packages],
+        directory,
+        NPM_INSTALL_TIMEOUT_MS
       );
-    } finally {
-      process.chdir(originalCwd);
+      const output = `${result.stdout}\n${result.stderr}`.trim();
+      logger.info('npm install finished', {
+        exitCode: result.exitCode,
+        output: output.slice(-2000),
+      });
+      install = { ran: true, ok: result.exitCode === 0, output: output.slice(-1500) };
+      if (!install.ok) {
+        return {
+          success: false,
+          error: `Project files were written to ${directory}, but npm install failed (exit ${result.exitCode}). Run it manually.\n${output.slice(-2000)}`,
+          data: { directory, files: files.map(([name]) => name) },
+          metadata: metadata(command),
+        };
+      }
     }
 
     logger.info('Hardhat project initialized successfully', { directory });
@@ -118,75 +201,59 @@ export async function hardhatInit(args: {
         directory,
         networks,
         typescript,
-        files: [
-          configFile,
-          '.env.example',
-          'contracts/Greeter.sol',
-          `scripts/deploy.${scriptExt}`,
-          `test/Greeter.test.${scriptExt}`,
-          '.gitignore',
-          'README.md',
+        hardhat: 'Hardhat 3 (ESM) with @nomicfoundation/hardhat-toolbox-mocha-ethers',
+        files: files.map(([name]) => name),
+        installed: install.ran
+          ? 'Dependencies installed'
+          : 'Dependencies not installed (skipInstall); run `npm install --save-dev ' +
+            `${HARDHAT_SCAFFOLD_PACKAGES.hardhat} ${HARDHAT_SCAFFOLD_PACKAGES.toolbox} ${HARDHAT_SCAFFOLD_PACKAGES.dotenv}\``,
+        warnings: warnings.length > 0 ? warnings : undefined,
+        nextSteps: [
+          `hardhat_project compile (directory: ${directory})`,
+          `hardhat_project test (directory: ${directory})`,
+          'hardhat_contract deploy with contractName "Greeter" and constructorArgs ["Hello, Hedera!"] on testnet (uses the MCP operator key)',
         ],
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat init',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Hardhat initialization failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Initialization failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat init',
-      },
-    };
+    return failure(error, 'Initialization failed', command);
   }
 }
 
 /**
  * 2. Compile contracts
  */
-export async function hardhatCompile(args: { force?: boolean; directory?: string }): Promise<ToolResult> {
+export async function hardhatCompile(args: {
+  force?: boolean;
+  directory?: string;
+}): Promise<ToolResult> {
+  const command = 'hardhat compile';
   try {
-    logger.info('Compiling contracts', { force: args.force, directory: args.directory });
+    const result = await hardhatService.compile({ force: args.force }, args.directory);
 
-    const result = await hardhatService.compile(args.force, args.directory);
-
-    if (result.success) {
-      return {
-        success: true,
-        data: {
-          artifactCount: result.artifacts?.length || 0,
-          artifacts: result.artifacts,
-        },
-        metadata: {
-          executedVia: 'hardhat',
-          command: 'hardhat compile',
-        },
-      };
-    } else {
+    if (!result.success) {
       return {
         success: false,
         error: result.errors?.join('\n') || 'Compilation failed',
-        metadata: {
-          executedVia: 'hardhat',
-          command: 'hardhat compile',
-        },
+        data: { output: result.output },
+        metadata: metadata(command),
       };
     }
+    return {
+      success: true,
+      data: {
+        artifactCount: result.artifacts?.length || 0,
+        artifacts: result.artifacts,
+        warnings: result.warnings,
+        output: result.output,
+      },
+      metadata: metadata(command),
+    };
   } catch (error) {
     logger.error('Compilation failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Compilation failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat compile',
-      },
-    };
+    return failure(error, 'Compilation failed', command);
   }
 }
 
@@ -199,40 +266,33 @@ export async function hardhatTest(args: {
   network?: string;
   directory?: string;
 }): Promise<ToolResult> {
+  const command = 'hardhat test';
   try {
-    logger.info('Running tests', args);
-
-    const result = await hardhatService.test({
-      testFiles: args.testFiles,
-      grep: args.grep,
-      network: args.network,
-      directory: args.directory,
-    });
+    const result = await hardhatService.test(
+      { testFiles: args.testFiles, grep: args.grep, network: args.network },
+      args.directory
+    );
 
     return {
       success: result.success,
+      error: result.success
+        ? undefined
+        : result.failed
+          ? `${result.failed} test(s) failed`
+          : 'Test run failed',
       data: {
         passed: result.passed,
         failed: result.failed,
         skipped: result.skipped,
-        duration: result.duration,
+        durationMs: result.duration,
         failures: result.failures,
+        output: result.output,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat test',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Tests failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Tests failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat test',
-      },
-    };
+    return failure(error, 'Tests failed', command);
   }
 }
 
@@ -240,91 +300,93 @@ export async function hardhatTest(args: {
  * 4. Clean artifacts
  */
 export async function hardhatClean(args: { directory?: string } = {}): Promise<ToolResult> {
+  const command = 'hardhat clean';
   try {
-    logger.info('Cleaning artifacts and cache', { directory: args.directory });
-
-    const success = await hardhatService.clean(args.directory);
-
+    const result = await hardhatService.clean(args.directory);
     return {
-      success,
-      data: {
-        message: success ? 'Artifacts and cache cleaned' : 'Clean failed',
-      },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat clean',
-      },
+      success: true,
+      data: { message: 'Artifacts and cache cleaned', output: result.output || undefined },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Clean failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Clean failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat clean',
-      },
-    };
+    return failure(error, 'Clean failed', command);
   }
 }
 
 /**
- * 5. Deploy contracts (via script)
+ * 5. Deploy a contract: from compiled artifacts through the JSON-RPC relay
+ *    (contractName) or by running a Hardhat script (script)
  */
 export async function hardhatDeploy(args: {
-  script: string;
+  contractName?: string;
+  constructorArgs?: any[];
+  script?: string;
   network?: string;
+  privateKey?: string;
+  gasLimit?: number;
+  value?: string;
   directory?: string;
 }): Promise<ToolResult> {
+  const command = args.script ? `hardhat run ${args.script}` : 'deploy via JSON-RPC relay';
   try {
-    logger.info('Deploying contracts', { script: args.script, network: args.network, directory: args.directory });
+    logger.info('Deploying contract', {
+      contractName: args.contractName,
+      script: args.script,
+      network: args.network,
+      directory: args.directory,
+    });
 
-    // Import and inject operator environment variables
-    const { getDeploymentEnvVars } = await import('../utils/key-converter.js');
-    const envVars = getDeploymentEnvVars();
-
-    // Inject operator credentials into environment
-    for (const [key, value] of Object.entries(envVars)) {
-      if (!process.env[key]) {
-        // Only set if not already set
-        process.env[key] = value;
-      }
-    }
-
-    const hre = await hardhatService.getHRE(args.directory);
-
-    // Run the deployment script
-    await hre.run('run', { script: args.script, network: args.network });
+    const result = await hardhatService.deploy(
+      {
+        contractName: args.contractName,
+        constructorArgs: args.constructorArgs,
+        deployScript: args.script,
+        network: args.network,
+        privateKey: args.privateKey,
+        gasLimit: args.gasLimit,
+        value: args.value,
+      },
+      args.directory
+    );
 
     return {
       success: true,
       data: {
-        message: 'Deployment script executed successfully',
-        script: args.script,
-        network: args.network || hre.network.name,
+        contractName: args.contractName,
+        address: result.address,
+        transactionHash: result.transactionHash,
+        blockNumber: result.blockNumber,
+        gasUsed: result.gasUsed,
+        deployer: result.deployer,
+        constructorArgs: result.constructorArgs,
+        network: result.network,
+        method: result.method,
+        output: result.output,
+        message:
+          result.method === 'script'
+            ? result.address
+              ? `Script finished; deployed address parsed from output: ${result.address}`
+              : 'Script finished (no address found in output)'
+            : `Deployed ${args.contractName} at ${result.address} on ${result.network}`,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: `hardhat run ${args.script}`,
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Deployment failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Deployment failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat run',
-      },
-    };
+    return failure(error, 'Deployment failed', command);
   }
 }
 
 /**
- * 6. Verify contract on HashScan
+ * 6. Verify contract: locate the build-info and explain the Sourcify route
  */
-export async function hardhatVerify(args: { address: string; constructorArgs?: any[]; directory?: string }): Promise<ToolResult> {
+export async function hardhatVerify(args: {
+  address: string;
+  constructorArgs?: any[];
+  directory?: string;
+}): Promise<ToolResult> {
+  const command = 'hardhat verify';
   try {
     logger.info('Getting verification file', { address: args.address, directory: args.directory });
 
@@ -334,10 +396,7 @@ export async function hardhatVerify(args: { address: string; constructorArgs?: a
       return {
         success: false,
         error: 'No verification file found. Run hardhat compile first.',
-        metadata: {
-          executedVia: 'hardhat',
-          command: 'hardhat verify',
-        },
+        metadata: metadata(command),
       };
     }
 
@@ -349,159 +408,124 @@ export async function hardhatVerify(args: { address: string; constructorArgs?: a
         address: args.address,
         constructorArgs: args.constructorArgs,
         instructions: [
-          '1. Navigate to https://hashscan.io/ or https://verify.hashscan.io/',
-          '2. Find your deployed contract by address',
-          `3. Click "Verify Contract"`,
-          `4. Upload the verification file: ${verificationFile}`,
-          '5. Contract will be verified automatically',
+          'HashScan reads verification status from Sourcify (https://sourcify.dev). Either:',
+          `a) Run: npx hardhat verify --network <network> ${args.address}${args.constructorArgs?.length ? ' <constructor args>' : ''} (requires @nomicfoundation/hardhat-verify 3.x with sourcify enabled; the HashPilot scaffold enables it)`,
+          `b) Upload ${verificationFile} at https://verify.sourcify.dev/ for chain 296 (testnet) or 295 (mainnet)`,
+          'c) Use the verify_contract tool once it targets the Sourcify v2 API',
+          'Previewnet (297) is not supported by Sourcify.',
         ],
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat verify',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Verification preparation failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Verification failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat verify',
-      },
-    };
+    return failure(error, 'Verification failed', command);
   }
 }
 
 /**
  * 7. Flatten contracts
  */
-export async function hardhatFlatten(args: { files?: string[]; directory?: string }): Promise<ToolResult> {
+export async function hardhatFlatten(args: {
+  files?: string[];
+  directory?: string;
+}): Promise<ToolResult> {
+  const command = 'hardhat flatten';
   try {
-    logger.info('Flattening contracts', { files: args.files, directory: args.directory });
-
     const flattened = await hardhatService.flatten(args.files, args.directory);
-
     return {
       success: true,
-      data: {
-        flattened,
-        fileCount: args.files?.length || 0,
-      },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat flatten',
-      },
+      data: { flattened, fileCount: args.files?.length || 0 },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Flatten failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Flatten failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat flatten',
-      },
-    };
+    return failure(error, 'Flatten failed', command);
   }
 }
 
 /**
- * 8. Configure/Add network
+ * 8. Configure/Add network: returns a Hardhat 3 network entry to paste
  */
 export async function hardhatConfigAddNetwork(args: {
-  network: 'mainnet' | 'testnet' | 'previewnet' | 'local' | string;
-  rpcUrl: string;
-  chainId: number;
+  network: HederaNetworkName | string;
+  rpcUrl?: string;
+  chainId?: number;
   privateKey?: string;
 }): Promise<ToolResult> {
+  const command = 'config add network';
   try {
-    logger.info('Adding network configuration', { network: args.network });
+    const known = HEDERA_NETWORKS[args.network as HederaNetworkName];
+    const rpcUrl = args.rpcUrl || known?.rpcUrl;
+    const chainId = args.chainId || known?.chainId;
+    if (!rpcUrl || !chainId) {
+      return {
+        success: false,
+        error: `Unknown network "${args.network}": pass rpcUrl and chainId, or use one of ${Object.keys(HEDERA_NETWORKS).join(', ')}`,
+        metadata: metadata(command),
+      };
+    }
+    const envPrefix = args.network.toUpperCase().replace(/[^A-Z0-9]/g, '_');
 
-    // This would require modifying the hardhat.config.js file
-    // For now, we'll return instructions
     return {
       success: true,
       data: {
-        message: `Add this configuration to your hardhat.config.js:`,
-        config: `
-    ${args.network}: {
-      url: "${args.rpcUrl}",
-      accounts: [process.env.${args.network.toUpperCase()}_PRIVATE_KEY],
-      chainId: ${args.chainId},
-    }`,
-        envVar: `${args.network.toUpperCase()}_PRIVATE_KEY=${args.privateKey || 'your-private-key-here'}`,
+        message: `Add this entry under "networks" in your hardhat.config (Hardhat 3 syntax):`,
+        config: generateNetworkEntry({ name: args.network, rpcUrl, chainId }),
+        envVars: [
+          `${envPrefix}_RPC_URL=${rpcUrl}`,
+          `${envPrefix}_PRIVATE_KEY=${args.privateKey || '0x<your ECDSA private key>'}`,
+        ],
+        note: 'When commands run through HashPilot these variables are injected from the MCP operator configuration.',
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'config add network',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Network configuration failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Configuration failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'config add network',
-      },
-    };
+    return failure(error, 'Configuration failed', command);
   }
 }
 
 /**
  * 9. Get compiled artifacts
  */
-export async function hardhatGetArtifacts(args: { contractName?: string; directory?: string }): Promise<ToolResult> {
+export async function hardhatGetArtifacts(args: {
+  contractName?: string;
+  directory?: string;
+}): Promise<ToolResult> {
+  const command = 'get artifacts';
   try {
-    logger.info('Getting artifacts', { contractName: args.contractName, directory: args.directory });
-
     const artifacts = await hardhatService.getArtifacts(args.contractName, args.directory);
-
     return {
       success: true,
-      data: {
-        artifacts,
-        count: artifacts.length,
-      },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'get artifacts',
-      },
+      data: { artifacts, count: artifacts.length },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Failed to get artifacts', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to get artifacts',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'get artifacts',
-      },
-    };
+    return failure(error, 'Failed to get artifacts', command);
   }
 }
 
 /**
- * 10. Call contract function (read-only)
+ * 10. Call contract function (read-only, via eth_call)
  */
 export async function hardhatCallContract(args: {
   address: string;
-  abi: any[];
+  abi?: any[];
+  contractName?: string;
   method: string;
   args?: any[];
   network?: string;
   directory?: string;
 }): Promise<ToolResult> {
+  const command = 'contract call';
   try {
-    logger.info('Calling contract function', { address: args.address, method: args.method, directory: args.directory });
-
     const result = await hardhatService.callContract({
       address: args.address,
       abi: args.abi,
-      method: args.method,
+      contractName: args.contractName,
+      functionName: args.method,
       args: args.args,
       network: args.network,
       directory: args.directory,
@@ -509,61 +533,42 @@ export async function hardhatCallContract(args: {
 
     return {
       success: true,
-      data: {
-        method: args.method,
-        result,
-      },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'contract call',
-      },
+      data: { method: args.method, result },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Contract call failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Contract call failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'contract call',
-      },
-    };
+    return failure(error, 'Contract call failed', command);
   }
 }
 
 /**
- * 11. Execute contract transaction (state-changing)
+ * 11. Execute contract transaction (state-changing, signed with the operator or given key)
  */
 export async function hardhatExecuteContract(args: {
   address: string;
-  abi: any[];
+  abi?: any[];
+  contractName?: string;
   method: string;
   args?: any[];
   value?: string;
   gasLimit?: number;
+  network?: string;
+  privateKey?: string;
   directory?: string;
 }): Promise<ToolResult> {
+  const command = 'contract execute';
   try {
-    logger.info('Executing contract transaction', { address: args.address, method: args.method, directory: args.directory });
-
-    // Import and inject operator environment variables
-    const { getDeploymentEnvVars } = await import('../utils/key-converter.js');
-    const envVars = getDeploymentEnvVars();
-
-    // Inject operator credentials into environment
-    for (const [key, value] of Object.entries(envVars)) {
-      if (!process.env[key]) {
-        process.env[key] = value;
-      }
-    }
-
     const result = await hardhatService.executeContract({
       address: args.address,
       abi: args.abi,
-      method: args.method,
+      contractName: args.contractName,
+      functionName: args.method,
       args: args.args,
       value: args.value,
       gasLimit: args.gasLimit,
+      network: args.network,
+      privateKey: args.privateKey,
       directory: args.directory,
     });
 
@@ -571,148 +576,113 @@ export async function hardhatExecuteContract(args: {
       success: true,
       data: {
         method: args.method,
-        transactionHash: result.hash,
-        blockNumber: result.receipt.blockNumber,
-        gasUsed: result.receipt.gasUsed.toString(),
+        transactionHash: result.transactionHash,
+        blockNumber: result.blockNumber,
+        gasUsed: result.gasUsed,
+        status: result.status,
+        from: result.from,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'contract execute',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Contract execution failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Contract execution failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'contract execute',
-      },
-    };
+    return failure(error, 'Contract execution failed', command);
   }
 }
 
 /**
- * 12. Get available accounts
+ * 12. Get available accounts (the MCP operator, with its relay balance)
  */
-export async function hardhatGetAccounts(args: { directory?: string } = {}): Promise<ToolResult> {
+export async function hardhatGetAccounts(
+  args: { directory?: string; network?: string } = {}
+): Promise<ToolResult> {
+  const command = 'get accounts';
   try {
-    logger.info('Getting available accounts', { directory: args.directory });
-
-    const accounts = await hardhatService.getAccounts(args.directory);
-
+    const result = await hardhatService.getAccounts(args.directory, args.network);
     return {
       success: true,
       data: {
-        accounts,
-        count: accounts.length,
+        accounts: result.accounts,
+        count: result.accounts.length,
+        network: result.network,
+        message: result.message,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'get accounts',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Failed to get accounts', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to get accounts',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'get accounts',
-      },
-    };
+    return failure(error, 'Failed to get accounts', command);
   }
 }
 
 /**
- * 13. Deploy via Ignition (modern deployment)
+ * 13. Deploy via Ignition
  */
 export async function hardhatDeployIgnition(args: {
   module: string;
-  parameters?: any;
+  parameters?: Record<string, unknown> | string;
   network?: string;
+  deploymentId?: string;
+  reset?: boolean;
   directory?: string;
 }): Promise<ToolResult> {
+  const command = 'ignition deploy';
   try {
-    logger.info('Deploying via Ignition', { module: args.module, network: args.network, directory: args.directory });
-
-    // Import and inject operator environment variables
-    const { getDeploymentEnvVars } = await import('../utils/key-converter.js');
-    const envVars = getDeploymentEnvVars();
-
-    // Inject operator credentials into environment
-    for (const [key, value] of Object.entries(envVars)) {
-      if (!process.env[key]) {
-        process.env[key] = value;
-      }
-    }
-
-    const hre = await hardhatService.getHRE(args.directory);
-
-    // Run ignition deployment
-    await hre.run('ignition:deploy', {
-      module: args.module,
-      parameters: args.parameters,
-      network: args.network,
-    });
+    const result = await hardhatService.deployIgnition(
+      {
+        module: args.module,
+        parameters: args.parameters,
+        network: args.network,
+        deploymentId: args.deploymentId,
+        reset: args.reset,
+      },
+      args.directory
+    );
 
     return {
       success: true,
       data: {
-        message: 'Ignition deployment executed successfully',
+        message: 'Ignition deployment finished',
         module: args.module,
-        network: args.network || hre.network.name,
+        network: result.network,
+        deploymentId: result.deploymentId,
+        addresses: result.addresses,
+        output: result.output,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'ignition deploy',
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Ignition deployment failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Ignition deployment failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'ignition deploy',
-      },
-    };
+    return failure(error, 'Ignition deployment failed', command);
   }
 }
 
 /**
- * 14. Run custom task
+ * 14. Run any Hardhat task
  */
-export async function hardhatRunTask(args: { task: string; params?: any; directory?: string }): Promise<ToolResult> {
+export async function hardhatRunTask(args: {
+  task: string;
+  params?: Record<string, unknown> | unknown[];
+  directory?: string;
+}): Promise<ToolResult> {
+  const command = `hardhat ${args.task}`;
   try {
-    logger.info('Running custom task', { task: args.task, directory: args.directory });
-
     const result = await hardhatService.runTask(args.task, args.params, args.directory);
-
     return {
       success: true,
       data: {
         task: args.task,
-        result,
+        command: result.command,
+        exitCode: result.exitCode,
+        stdout: result.stdout.slice(-8000),
+        stderr: result.stderr.slice(-4000),
+        durationMs: result.durationMs,
       },
-      metadata: {
-        executedVia: 'hardhat',
-        command: `hardhat ${args.task}`,
-      },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Task execution failed', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Task execution failed',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat task',
-      },
-    };
+    return failure(error, 'Task execution failed', command);
   }
 }
 
@@ -720,388 +690,16 @@ export async function hardhatRunTask(args: { task: string; params?: any; directo
  * 15. List available tasks
  */
 export async function hardhatListTasks(args: { directory?: string } = {}): Promise<ToolResult> {
+  const command = 'hardhat --help';
   try {
-    logger.info('Listing available tasks', { directory: args.directory });
-
     const tasks = await hardhatService.listTasks(args.directory);
-
     return {
       success: true,
-      data: {
-        tasks,
-        count: tasks.length,
-      },
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat list tasks',
-      },
+      data: { tasks, count: tasks.length },
+      metadata: metadata(command),
     };
   } catch (error) {
     logger.error('Failed to list tasks', { error });
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to list tasks',
-      metadata: {
-        executedVia: 'hardhat',
-        command: 'hardhat list tasks',
-      },
-    };
+    return failure(error, 'Failed to list tasks', command);
   }
 }
-
-/**
- * Export tool definitions for MCP
- */
-export const hardhatTools = [
-  {
-    name: 'hardhat_init',
-    description:
-      'Initialize a new Hardhat project with Hedera network configuration. Creates directory structure, config files, sample contracts, tests, and deployment scripts.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (default: current directory)',
-        },
-        networks: {
-          type: 'array',
-          description: 'Networks to configure (default: ["testnet", "local"])',
-          items: {
-            type: 'string',
-            enum: ['mainnet', 'testnet', 'previewnet', 'local'],
-          },
-        },
-        solidity: {
-          type: 'string',
-          description: 'Solidity compiler version (default: "0.8.20")',
-          default: '0.8.20',
-        },
-        typescript: {
-          type: 'boolean',
-          description: 'Use TypeScript configuration (default: false)',
-          default: false,
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_compile',
-    description:
-      'Compile all Solidity contracts in the project. Generates artifacts (ABI, bytecode) and build-info files for verification.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        force: {
-          type: 'boolean',
-          description: 'Force recompilation (default: false)',
-          default: false,
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_test',
-    description: 'Run Mocha/Chai tests for smart contracts. Supports filtering by file or pattern.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        testFiles: {
-          type: 'array',
-          description: 'Specific test files to run (default: all test files)',
-          items: {
-            type: 'string',
-          },
-        },
-        grep: {
-          type: 'string',
-          description: 'Filter tests by pattern (Mocha grep)',
-        },
-        network: {
-          type: 'string',
-          description: 'Network to run tests on (default: hardhat local)',
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_clean',
-    description: 'Clean cache and artifacts directories. Useful before fresh compilation.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_deploy',
-    description: 'Execute deployment script to deploy contracts to Hedera networks.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        script: {
-          type: 'string',
-          description: 'Path to deployment script (e.g., "scripts/deploy.js")',
-        },
-        network: {
-          type: 'string',
-          description: 'Network to deploy to (e.g., "testnet", "mainnet")',
-        },
-      },
-      required: ['script'],
-    },
-  },
-  {
-    name: 'hardhat_verify',
-    description:
-      'Get verification metadata for HashScan contract verification. Returns build-info file path.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        address: {
-          type: 'string',
-          description: 'Deployed contract address (0x... or 0.0.xxxxx)',
-        },
-        constructorArgs: {
-          type: 'array',
-          description: 'Constructor arguments used during deployment',
-          items: {},
-        },
-      },
-      required: ['address'],
-    },
-  },
-  {
-    name: 'hardhat_flatten',
-    description: 'Flatten contracts into single file for easier verification.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        files: {
-          type: 'array',
-          description: 'Contract files to flatten (default: all contracts)',
-          items: {
-            type: 'string',
-          },
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_config_add_network',
-    description: 'Generate network configuration snippet for hardhat.config.js.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        network: {
-          type: 'string',
-          description: 'Network name (e.g., "mainnet", "testnet", "previewnet", "local", or custom)',
-        },
-        rpcUrl: {
-          type: 'string',
-          description: 'RPC endpoint URL for the network',
-        },
-        chainId: {
-          type: 'number',
-          description: 'Chain ID for the network (e.g., 296 for mainnet, 297 for testnet)',
-        },
-        privateKey: {
-          type: 'string',
-          description: 'Optional: Private key for the network (will be prompted for env var)',
-        },
-      },
-      required: ['network', 'rpcUrl', 'chainId'],
-    },
-  },
-  {
-    name: 'hardhat_get_artifacts',
-    description: 'Get compiled contract artifacts (ABI, bytecode, etc.).',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        contractName: {
-          type: 'string',
-          description: 'Specific contract name (default: all contracts)',
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_call_contract',
-    description: 'Call read-only contract function (view/pure). No gas cost.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        address: {
-          type: 'string',
-          description: 'Contract address (0x... or 0.0.xxxxx)',
-        },
-        abi: {
-          type: 'array',
-          description: 'Contract ABI (JSON array)',
-          items: {},
-        },
-        method: {
-          type: 'string',
-          description: 'Method name to call',
-        },
-        args: {
-          type: 'array',
-          description: 'Method arguments (default: [])',
-          items: {},
-        },
-        network: {
-          type: 'string',
-          description: 'Network to call on (default: current network)',
-        },
-      },
-      required: ['address', 'abi', 'method'],
-    },
-  },
-  {
-    name: 'hardhat_execute_contract',
-    description: 'Execute state-changing contract function. Requires gas and sends transaction.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        address: {
-          type: 'string',
-          description: 'Contract address (0x... or 0.0.xxxxx)',
-        },
-        abi: {
-          type: 'array',
-          description: 'Contract ABI (JSON array)',
-          items: {},
-        },
-        method: {
-          type: 'string',
-          description: 'Method name to execute',
-        },
-        args: {
-          type: 'array',
-          description: 'Method arguments (default: [])',
-          items: {},
-        },
-        value: {
-          type: 'string',
-          description: 'HBAR to send with transaction (in wei)',
-        },
-        gasLimit: {
-          type: 'number',
-          description: 'Gas limit for transaction',
-        },
-      },
-      required: ['address', 'abi', 'method'],
-    },
-  },
-  {
-    name: 'hardhat_get_accounts',
-    description: 'Get list of available accounts with balances.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-      },
-    },
-  },
-  {
-    name: 'hardhat_deploy_ignition',
-    description: 'Deploy contracts using Hardhat Ignition (modern declarative deployment).',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        module: {
-          type: 'string',
-          description: 'Ignition module path (e.g., "ignition/modules/MyModule")',
-        },
-        parameters: {
-          type: 'object',
-          description: 'Deployment parameters (JSON object)',
-        },
-        network: {
-          type: 'string',
-          description: 'Network to deploy to (e.g., "testnet", "mainnet")',
-        },
-      },
-      required: ['module'],
-    },
-  },
-  {
-    name: 'hardhat_run_task',
-    description: 'Execute any Hardhat task programmatically.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-        task: {
-          type: 'string',
-          description: 'Task name to execute (e.g., "compile", "test", "clean")',
-        },
-        params: {
-          type: 'object',
-          description: 'Task parameters (JSON object)',
-        },
-      },
-      required: ['task'],
-    },
-  },
-  {
-    name: 'hardhat_list_tasks',
-    description: 'List all available Hardhat tasks (built-in and custom).',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        directory: {
-          type: 'string',
-          description: 'Project directory path (absolute path to Hardhat project)',
-        },
-      },
-    },
-  },
-];
