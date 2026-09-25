@@ -8,6 +8,23 @@ export interface ServerConfig {
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
+/**
+ * The networks this server can talk to.
+ *
+ * Exported as a value, not just a type: the network name arrives from an MCP
+ * client, from a persisted state file and from a restored backup, none of which
+ * TypeScript checks at runtime. Persisting an unvalidated name used to brick the
+ * server permanently — every tool answered "Unknown network: <junk>" and the bad
+ * value survived restarts.
+ */
+export const SUPPORTED_NETWORKS = ['mainnet', 'testnet', 'previewnet', 'local'] as const;
+
+export type SupportedNetwork = (typeof SUPPORTED_NETWORKS)[number];
+
+export function isSupportedNetwork(value: unknown): value is SupportedNetwork {
+  return typeof value === 'string' && (SUPPORTED_NETWORKS as readonly string[]).includes(value);
+}
+
 export interface HederaConfig {
   network: 'mainnet' | 'testnet' | 'previewnet' | 'local';
   operatorId?: string;

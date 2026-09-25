@@ -6,6 +6,7 @@
 import { hederaCLI } from '../services/hedera-cli.js';
 import { ToolResult } from '../types/index.js';
 import logger from '../utils/logger.js';
+import { SUPPORTED_NETWORKS, isSupportedNetwork } from '../types/index.js';
 
 /**
  * Get current network information
@@ -36,6 +37,15 @@ export async function switchNetwork(args: {
   network: 'mainnet' | 'testnet' | 'previewnet' | 'local';
 }): Promise<ToolResult> {
   try {
+    // Reject an unknown network at the boundary so the client gets a usable
+    // message naming the valid options, instead of an SDK-level failure.
+    if (!isSupportedNetwork(args.network)) {
+      return {
+        success: false,
+        error: `Unknown network: ${String(args.network)}. Supported networks: ${SUPPORTED_NETWORKS.join(', ')}`,
+      };
+    }
+
     logger.info('Switching network', { network: args.network });
 
     const result = await hederaCLI.executeCommand({

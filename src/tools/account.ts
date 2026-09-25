@@ -6,6 +6,7 @@
 import { hederaCLI } from '../services/hedera-cli.js';
 import { hederaClient } from '../services/hedera-client.js';
 import { addressBook } from '../services/addressbook.js';
+import { advisoriesFor } from '../services/error-analyzer.js';
 import { ToolResult } from '../types/index.js';
 import logger from '../utils/logger.js';
 
@@ -77,7 +78,18 @@ export async function transferHbar(args: {
       },
     });
 
-    return result;
+    if (!result.success) {
+      return result;
+    }
+
+    // Keep whatever metadata the execution path already reported
+    return {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        advisories: advisoriesFor('transfer_hbar', {}),
+      },
+    };
   } catch (error) {
     logger.error('Failed to transfer HBAR', { error });
     return {
@@ -94,9 +106,18 @@ export async function createAccount(args: {
   initialBalance?: number;
   publicKey?: string;
   memo?: string;
+  keyType?: 'ecdsa' | 'ed25519';
+  maxAutomaticTokenAssociations?: number;
+  stakedAccountId?: string;
+  stakedNodeId?: number;
+  declineStakingReward?: boolean;
 }): Promise<ToolResult> {
   try {
-    logger.info('Creating account', { initialBalance: args.initialBalance, memo: args.memo });
+    logger.info('Creating account', {
+      initialBalance: args.initialBalance,
+      memo: args.memo,
+      keyType: args.keyType || 'ecdsa',
+    });
 
     // Ensure client is initialized
     if (!hederaClient.isReady()) {
@@ -107,6 +128,11 @@ export async function createAccount(args: {
       initialBalance: args.initialBalance,
       publicKey: args.publicKey,
       memo: args.memo,
+      keyType: args.keyType,
+      maxAutomaticTokenAssociations: args.maxAutomaticTokenAssociations,
+      stakedAccountId: args.stakedAccountId,
+      stakedNodeId: args.stakedNodeId,
+      declineStakingReward: args.declineStakingReward,
     });
 
     return {
@@ -115,6 +141,7 @@ export async function createAccount(args: {
       metadata: {
         executedVia: 'sdk',
         command: 'account create',
+        advisories: advisoriesFor('account_create', {}),
       },
     };
   } catch (error) {
@@ -326,7 +353,7 @@ export const accountTools = [
   {
     name: 'account_create',
     description:
-      'Create a new Hedera account with customizable parameters. Generates a new key pair automatically unless a public key is provided. Requires operator account to have sufficient HBAR for initial balance and creation fee.',
+      'Create a new Hedera account with customizable parameters: balance allocation, key type (ECDSA or ED25519), automatic token associations and staking. Generates a new key pair unless a public key is provided. Requires the operator account to hold enough HBAR for the initial balance and the creation fee.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -336,14 +363,42 @@ export const accountTools = [
           minimum: 0,
           default: 1,
         },
+        keyType: {
+          type: 'string',
+          enum: ['ecdsa', 'ed25519'],
+          description:
+            'Curve for the generated key pair (default: ecdsa). ECDSA also yields an EVM address; ED25519 is native Hedera only. Ignored when publicKey is given.',
+          default: 'ecdsa',
+        },
         publicKey: {
           type: 'string',
-          description: 'Optional: Provide a public key. If not provided, a new ECDSA key pair will be generated.',
+          description:
+            'Optional: Provide a public key (DER or raw hex). If not provided, a new key pair is generated using keyType.',
         },
         memo: {
           type: 'string',
           description: 'Optional: Account memo (max 100 characters)',
           maxLength: 100,
+        },
+        maxAutomaticTokenAssociations: {
+          type: 'number',
+          description:
+            'Tokens the account may auto-associate with, so it can receive them without a prior associate call. -1 means unlimited.',
+          minimum: -1,
+        },
+        stakedAccountId: {
+          type: 'string',
+          description: 'Stake this account to another account (format: 0.0.xxxxx)',
+          pattern: '^0\\.0\\.\\d+$',
+        },
+        stakedNodeId: {
+          type: 'number',
+          description: 'Stake this account to a node ID. Mutually exclusive with stakedAccountId.',
+          minimum: 0,
+        },
+        declineStakingReward: {
+          type: 'boolean',
+          description: 'Decline staking rewards (default: false)',
         },
       },
     },
