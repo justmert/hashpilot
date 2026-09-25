@@ -21,6 +21,11 @@ export default {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  // Redirects the data directory and clears operator credentials before any
+  // test module (and therefore any service singleton) is loaded.
+  setupFilesAfterEnv: ['<rootDir>/tests/setup-env.ts'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
+  // Integration tests need a build plus live OpenAI/Chroma; run them with npm run test:integration
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/tests/integration/'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
 };

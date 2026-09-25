@@ -2,7 +2,7 @@
 /**
  * HashPilot MCP Server
  * Production-ready MCP server for Hedera development
- * 31 tools following MCP best practices
+ * Composite tools following MCP best practices (count reported by health_check)
  */
 
 // CRITICAL: Redirect console.log to stderr BEFORE any imports
@@ -24,6 +24,12 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import logger from './utils/logger.js';
+import { getHederaConfig } from './utils/config.js';
+import { createRAGConfig } from './config/rag.js';
+import { getPackageVersion } from './utils/version.js';
+import { validateToolArguments } from './utils/validate-args.js';
+
+const SERVER_VERSION: string = getPackageVersion();
 
 // Core Hedera Operations (kept as individual tools for clarity)
 import { getAccountBalance, getAccountInfo, createAccount, transferHbar } from './tools/account.js';
@@ -58,15 +64,17 @@ import { verifyContract } from './tools/verify.js';
 import { stablecoinManage, stablecoinToolDefinition } from './tools/stablecoin.js';
 
 // Mirror Node (keeping essential query tools - consider converting to Resources in future)
-import { mirrorQueryAccount } from './tools/mirror-node.js';
+import { mirrorQueryAccount, mirrorQuery, mirrorQueryTool } from './tools/mirror-node.js';
+import { graphqlManage, graphqlTool } from './tools/graphql.js';
+import { hederaClient } from './services/hedera-client.js';
 
 // Error Analysis
 import { errorExplain, errorAnalysisToolDefinition } from './tools/error-analysis.js';
 
 const server = new Server(
   {
-    name: 'hashpilot-mcp-optimized',
-    version: '0.2.0',
+    name: 'hashpilot',
+    version: SERVER_VERSION,
   },
   {
     capabilities: {
@@ -77,22 +85,57 @@ const server = new Server(
   }
 );
 
+/**
+ * Probe a URL with a short timeout; returns a status string for health output
+ */
+async function probe(url: string, timeoutMs = 4000): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    return response.ok ? 'reachable' : `http ${response.status}`;
+  } catch (error) {
+    return `unreachable (${error instanceof Error ? error.message : String(error)})`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Health check
-async function healthCheck(): Promise<{ success: boolean; data: any }> {
-  return {
-    success: true,
-    data: {
-      status: 'healthy',
-      version: '0.2.0-optimized',
-      toolCount: 31,
-      optimization: 'MCP Best Practices Compliant + M3 Composite Integrations',
-    },
+async function healthCheck(
+  args: { verbose?: boolean } = {}
+): Promise<{ success: boolean; data: any }> {
+  const hedera = getHederaConfig();
+  const data: Record<string, unknown> = {
+    status: 'healthy',
+    version: SERVER_VERSION,
+    toolCount: optimizedToolDefinitions.length,
+    network: hedera.network,
+    operatorConfigured: Boolean(hedera.operatorId && hedera.operatorKey),
+    operatorId: hedera.operatorId || null,
   };
+
+  if (args.verbose) {
+    const rag = createRAGConfig();
+    const mirrorUrl = hederaClient.getMirrorNodeUrl();
+    const [mirrorNode, chroma] = await Promise.all([
+      probe(`${mirrorUrl}/api/v1/network/nodes?limit=1`),
+      probe(`${rag.chromaUrl.replace(/\/+$/, '')}/api/v2/heartbeat`),
+    ]);
+    data.services = {
+      mirrorNode: { url: mirrorUrl, status: mirrorNode },
+      jsonRpcRelay: { url: hederaClient.getJsonRpcRelayUrl() },
+      chromadb: { url: rag.chromaUrl, status: chroma, ragEnabled: Boolean(rag.openaiApiKey) },
+    };
+    data.system = { node: process.version, platform: process.platform, arch: process.arch };
+  }
+
+  return { success: true, data };
 }
 
 /**
  * OPTIMIZED TOOL DEFINITIONS
- * Target: 35 tools (down from 120)
+ * Consolidated from ~120 granular tools into composite ones
  * Following MCP best practices:
  * - Composite patterns for related operations
  * - Clear, intent-based descriptions
@@ -102,11 +145,15 @@ const optimizedToolDefinitions = [
   // Health Check (1 tool)
   {
     name: 'health_check',
-    description: 'Check HashPilot MCP server health and status. Returns version, tool count, and optimization level.',
+    description:
+      'Check HashPilot MCP server health and status. Returns version, tool count, network, and whether an operator is configured. With verbose=true also probes the Mirror Node and the ChromaDB host behind the docs tools.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        verbose: { type: 'boolean', description: 'Include detailed status' },
+        verbose: {
+          type: 'boolean',
+          description: 'Include service reachability and runtime details',
+        },
       },
     },
   },
@@ -114,11 +161,13 @@ const optimizedToolDefinitions = [
   // Account Operations (4 tools - essential, kept separate for clarity)
   {
     name: 'account_create',
-    description: `Create a new Hedera account with customizable parameters.
+    description: `Create a new Hedera account with customizable parameters: balance allocation, key type, automatic token associations and staking.
 
-CREATES: New account with auto-generated ECDSA key pair (or use provided public key)
+CREATES: New account with an auto-generated ECDSA or ED25519 key pair (or use a provided public key)
 FUNDS: Initial HBAR balance from operator account
-RETURNS: Account ID, private key, public key, transaction ID
+RETURNS: Account ID, private key (DER and raw hex), key type, public key, transaction ID
+
+KEY TYPES: ecdsa (default) also gives the account an EVM address and works with Hardhat, Foundry and JSON-RPC. ed25519 is native Hedera only.
 
 USE FOR: Creating new accounts for testing, development, or production workflows.
 COSTS: Network fee + initial balance (minimum 1 HBAR recommended)`,
@@ -126,8 +175,36 @@ COSTS: Network fee + initial balance (minimum 1 HBAR recommended)`,
       type: 'object' as const,
       properties: {
         initialBalance: { type: 'number', description: 'Initial HBAR balance (default: 1)' },
+        keyType: {
+          type: 'string',
+          enum: ['ecdsa', 'ed25519'],
+          description:
+            'Curve for the generated key pair (default: ecdsa). Ignored when publicKey is given.',
+        },
         memo: { type: 'string', description: 'Account memo (max 100 chars)' },
-        publicKey: { type: 'string', description: 'Optional: Provide existing public key' },
+        publicKey: {
+          type: 'string',
+          description: 'Optional: Provide an existing public key (DER or raw hex)',
+        },
+        maxAutomaticTokenAssociations: {
+          type: 'number',
+          description:
+            'Tokens the account may auto-associate with, so it can receive them without a prior associate call. -1 means unlimited.',
+          minimum: -1,
+        },
+        stakedAccountId: {
+          type: 'string',
+          description: 'Stake this account to another account (format: 0.0.xxxxx)',
+        },
+        stakedNodeId: {
+          type: 'number',
+          description: 'Stake this account to a node ID. Mutually exclusive with stakedAccountId.',
+          minimum: 0,
+        },
+        declineStakingReward: {
+          type: 'boolean',
+          description: 'Decline staking rewards (default: false)',
+        },
       },
     },
   },
@@ -135,8 +212,8 @@ COSTS: Network fee + initial balance (minimum 1 HBAR recommended)`,
     name: 'account_balance',
     description: `Query HBAR and token balances for any Hedera account.
 
-RETURNS: HBAR balance in ℏ format, list of all associated token balances
-FREE: No transaction fee (Mirror Node query)
+RETURNS: HBAR balance in ℏ format, list of all associated token balances (raw units, apply token decimals)
+FREE: No transaction fee (Mirror Node REST query, no operator required)
 
 USE FOR: Checking account balances, monitoring funds, verifying token holdings.`,
     inputSchema: {
@@ -151,8 +228,8 @@ USE FOR: Checking account balances, monitoring funds, verifying token holdings.`
     name: 'account_info',
     description: `Get comprehensive Hedera account information.
 
-RETURNS: Balance, EVM address, public key, memo, auto-renew period, expiration
-FREE: No transaction fee (Mirror Node query)
+RETURNS: Balance, EVM address, public key and key type, memo, auto-renew period, expiration, staking info
+FREE: No transaction fee (Mirror Node REST query, no operator required)
 
 USE FOR: Account inspection, EVM address lookup, key verification, expiration monitoring.`,
     inputSchema: {
@@ -263,6 +340,15 @@ USE FOR: Reading contract state, querying balances, checking conditions.`,
         abi: { type: 'array', items: {}, description: 'Contract ABI' },
         functionName: { type: 'string', description: 'Function to call' },
         args: { type: 'array', items: {}, description: 'Function arguments' },
+        blockNumber: {
+          type: 'string',
+          description: 'Block to read at: a hex block number, "latest" (default), or "earliest"',
+        },
+        network: {
+          type: 'string',
+          enum: ['mainnet', 'testnet', 'previewnet', 'local'],
+          description: 'Target network (default: current)',
+        },
       },
       required: ['contractAddress', 'abi', 'functionName'],
     },
@@ -283,7 +369,20 @@ USE FOR: Deploying Solidity contracts to Hedera EVM.`,
         bytecode: { type: 'string', description: 'Contract bytecode (0x...)' },
         abi: { type: 'array', items: {}, description: 'Contract ABI' },
         constructorArgs: { type: 'array', items: {}, description: 'Constructor arguments' },
-        privateKey: { type: 'string', description: 'Deployer private key (optional - uses MCP operator)' },
+        privateKey: {
+          type: 'string',
+          description: 'Deployer private key (optional - uses MCP operator)',
+        },
+        fromAlias: {
+          type: 'string',
+          description: 'Address book alias whose stored key signs the transaction',
+        },
+        gasLimit: { type: 'number', description: 'Gas limit (default: estimated + 20%)' },
+        network: {
+          type: 'string',
+          enum: ['mainnet', 'testnet', 'previewnet', 'local'],
+          description: 'Target network (default: current)',
+        },
       },
       required: ['bytecode'],
     },
@@ -306,8 +405,21 @@ USE FOR: Token transfers, contract interactions, state modifications.`,
         abi: { type: 'array', items: {}, description: 'Contract ABI' },
         functionName: { type: 'string', description: 'Function to execute' },
         args: { type: 'array', items: {}, description: 'Function arguments' },
-        privateKey: { type: 'string', description: 'Sender private key (optional - uses MCP operator)' },
+        privateKey: {
+          type: 'string',
+          description: 'Sender private key (optional - uses MCP operator)',
+        },
         value: { type: 'string', description: 'HBAR value to send (in wei)' },
+        fromAlias: {
+          type: 'string',
+          description: 'Address book alias whose stored key signs the transaction',
+        },
+        gasLimit: { type: 'number', description: 'Gas limit (default: estimated + 20%)' },
+        network: {
+          type: 'string',
+          enum: ['mainnet', 'testnet', 'previewnet', 'local'],
+          description: 'Target network (default: current)',
+        },
       },
       required: ['contractAddress', 'abi', 'functionName'],
     },
@@ -335,6 +447,20 @@ USE FOR: Finding specific documentation, discovering relevant tutorials, locatin
         language: {
           type: 'string',
           enum: ['javascript', 'typescript', 'java', 'python', 'go', 'solidity'],
+        },
+        hasCode: { type: 'boolean', description: 'Only return chunks that contain code' },
+        queryType: {
+          type: 'string',
+          enum: [
+            'conceptual',
+            'how_to',
+            'comparison',
+            'troubleshooting',
+            'best_practices',
+            'use_case',
+            'general',
+          ],
+          description: 'Optimise ranking for this kind of question',
         },
       },
       required: ['query'],
@@ -364,6 +490,27 @@ THIS IS YOUR PRIMARY TOOL FOR HEDERA KNOWLEDGE QUESTIONS.`,
           type: 'string',
           enum: ['javascript', 'typescript', 'java', 'python', 'go', 'solidity'],
           description: 'Preferred language for examples',
+        },
+        contentType: {
+          type: 'string',
+          enum: ['tutorial', 'api', 'concept', 'example', 'guide', 'reference'],
+          description: 'Restrict the retrieved context to one kind of document',
+        },
+        queryIntent: {
+          type: 'string',
+          enum: [
+            'conceptual',
+            'how_to',
+            'comparison',
+            'troubleshooting',
+            'best_practices',
+            'use_case',
+            'architecture',
+            'migration',
+            'security',
+            'general',
+          ],
+          description: 'Shape the answer for this kind of question',
         },
       },
       required: ['question'],
@@ -451,30 +598,91 @@ USE FOR: Production contract deployment, automated workflows, verified deploymen
           enum: ['hardhat', 'foundry', 'direct'],
           description: 'Framework (auto-detected if not specified)',
         },
+        privateKey: {
+          type: 'string',
+          description: 'Deployer private key (optional - uses MCP operator)',
+        },
+        fromAlias: {
+          type: 'string',
+          description: 'Address book alias whose stored key deploys the contract',
+        },
+        gasLimit: { type: 'number', description: 'Gas limit for the deployment' },
+        metadata: {
+          type: 'object',
+          description: 'Free-form metadata stored with the deployment record',
+        },
       },
       required: ['contractName', 'network'],
     },
   },
   {
     name: 'verify_contract',
-    description: `Verify smart contract on HashScan block explorer.
+    description: `Verify smart contract source on Sourcify, which HashScan reads its verified badge from.
 
-METHODS: Direct source upload, Hardhat build-info, Foundry artifacts
-RETURNS: Verification status and HashScan URL
+METHODS (best first): Hardhat build-info, Foundry artifact, raw source upload
+RETURNS: Match quality (perfect = exact, partial = metadata differs), HashScan URL
+
+NETWORKS: mainnet (chain 295) and testnet (chain 296) only. Sourcify does not support previewnet.
+
+Prefer buildInfoPath or artifactPath: they carry the exact compiler version and settings.
+Raw source upload has to assume them and usually fails to match unless they are supplied.
 
 USE FOR: Contract transparency, code verification, public auditability.`,
     inputSchema: {
       type: 'object' as const,
       properties: {
-        address: { type: 'string', description: 'Contract address (0x...)' },
+        address: {
+          type: 'string',
+          description: 'Contract address (0x...)',
+          pattern: '^0x[a-fA-F0-9]{40}$',
+        },
         network: {
           type: 'string',
-          enum: ['mainnet', 'testnet', 'previewnet'],
+          description: 'Hedera network. Sourcify does not verify previewnet.',
+          enum: ['mainnet', 'testnet'],
         },
-        contractName: { type: 'string', description: 'Contract name' },
-        filePath: { type: 'string', description: 'Source file path' },
+        contractName: { type: 'string', description: 'Contract name, e.g. "Greeter"' },
+        filePath: {
+          type: 'string',
+          description:
+            'Path to a .sol file or a directory of .sol files. Used when no buildInfoPath or artifactPath is given.',
+        },
+        buildInfoPath: {
+          type: 'string',
+          description:
+            'Preferred for Hardhat: path to artifacts/build-info/<hash>.json, which embeds the full standard JSON input and the exact compiler version.',
+        },
+        artifactPath: {
+          type: 'string',
+          description:
+            'Preferred for Foundry: path to out/<Source>.sol/<Contract>.json. Sources are read from the project root inferred from this path.',
+        },
+        creatorTxHash: {
+          type: 'string',
+          description:
+            'Optional: hash of the contract creation transaction, so Sourcify can also match the creation bytecode.',
+          pattern: '^0x[a-fA-F0-9]{64}$',
+        },
+        compilerVersion: {
+          type: 'string',
+          description:
+            'Optional, raw-source path only: solc version such as "0.8.28" or "0.8.28+commit.7893614a". Defaults to the source pragma.',
+        },
+        optimizerEnabled: {
+          type: 'boolean',
+          description:
+            'Optional, raw-source path only: whether the optimizer was on (default false)',
+        },
+        optimizerRuns: {
+          type: 'number',
+          description: 'Optional, raw-source path only: optimizer runs (default 200)',
+        },
+        evmVersion: {
+          type: 'string',
+          description: 'Optional, raw-source path only: EVM version, e.g. "paris", "cancun"',
+        },
       },
-      required: ['address', 'network', 'contractName', 'filePath'],
+      required: ['address', 'network', 'contractName'],
     },
   },
   {
@@ -493,7 +701,13 @@ USE FOR: Tracking deployments, auditing, documentation.`,
           enum: ['mainnet', 'testnet', 'previewnet'],
         },
         contractName: { type: 'string', description: 'Filter by name' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'deploying', 'deployed', 'failed', 'verified'],
+          description: 'Filter by deployment status',
+        },
         limit: { type: 'number', description: 'Max results (default: 20)' },
+        offset: { type: 'number', description: 'Skip this many records (paging)' },
         exportFormat: {
           type: 'string',
           enum: ['json', 'csv', 'markdown'],
@@ -515,10 +729,19 @@ USE FOR: Account inspection, transaction history, state verification.`,
         accountId: { type: 'string', description: 'Account ID (0.0.xxxxx)' },
         includeTransactions: { type: 'boolean', description: 'Include recent transactions' },
         transactionLimit: { type: 'number', description: 'Transaction count (default: 20)' },
+        timestamp: {
+          type: 'string',
+          description:
+            'Consensus timestamp to read the account state at, e.g. 1700000000.000000000',
+        },
       },
       required: ['accountId'],
     },
   },
+  // Every other Mirror Node query, as resources of one tool
+  mirrorQueryTool,
+  // GraphQL over indexed Mirror Node data (Hgraph)
+  graphqlTool,
 
   // Hardhat & Foundry Integration Tools (4 composite tools)
   ...hardhatFoundryToolDefinitions,
@@ -530,7 +753,7 @@ USE FOR: Account inspection, transaction history, state verification.`,
   errorAnalysisToolDefinition,
 ];
 
-// Total: 25 core tools + 4 composite M3 tools + 1 stablecoin tool + 1 error_explain = 31 tools
+// Tool count is derived from this array; do not hardcode it elsewhere
 // M3 deliverables complete with optimized composite integrations (32 operations in 4 tools)
 // Plus enterprise stablecoin management (18 operations in 1 tool)
 // Plus error_explain with 55+ Hedera error codes and debugging guidance
@@ -553,13 +776,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   logger.info('Tool called', { name, args });
 
+  const validationError = validateToolArguments(optimizedToolDefinitions, name, args);
+  if (validationError) {
+    logger.warn('Tool call rejected by schema validation', { name, validationError });
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ success: false, error: validationError }, null, 2),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   let result;
 
   try {
     switch (name) {
       // Health
       case 'health_check':
-        result = await healthCheck();
+        result = await healthCheck(args as { verbose?: boolean });
         break;
 
       // Account Operations
@@ -581,7 +818,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await getCurrentNetwork();
         break;
       case 'network_switch':
-        result = await switchNetwork(args as { network: 'mainnet' | 'testnet' | 'previewnet' | 'local' });
+        result = await switchNetwork(
+          args as { network: 'mainnet' | 'testnet' | 'previewnet' | 'local' }
+        );
         break;
 
       // Composite Tools
@@ -643,6 +882,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await mirrorQueryAccount(args as any);
         break;
 
+      case 'mirror_query':
+        result = await mirrorQuery(args as any);
+        break;
+
+      case 'graphql':
+        result = await graphqlManage(args as any);
+        break;
+
       // Hardhat & Foundry Composite Tools
       case 'hardhat_project':
         result = await hardhatProjectManage(args as any);
@@ -669,6 +916,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       default:
         throw new Error(`Unknown tool: ${name}`);
+    }
+
+    // Tools that already produce MCP content (the docs/RAG tools) are passed
+    // through as-is; wrapping them again would hand clients escaped JSON.
+    if (
+      result &&
+      typeof result === 'object' &&
+      Array.isArray((result as { content?: unknown }).content)
+    ) {
+      return result as { content: Array<{ type: string; text: string }>; isError?: boolean };
     }
 
     // Format result for MCP
@@ -744,13 +1001,67 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 /**
  * Start Server
  */
+let shuttingDown = false;
+
+/**
+ * Shut down cleanly when the client goes away.
+ *
+ * The Hedera SDK client holds open gRPC connections, which keep the Node event
+ * loop alive: without this the process survived its MCP client disconnecting
+ * and every session leaked a server process still holding those connections.
+ */
+async function shutdown(reason: string): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+
+  logger.info('Shutting down HashPilot MCP Server', { reason });
+
+  try {
+    hederaClient.close();
+  } catch (error) {
+    logger.warn('Error closing Hedera client during shutdown', { error });
+  }
+
+  try {
+    await server.close();
+  } catch (error) {
+    logger.warn('Error closing MCP server during shutdown', { error });
+  }
+
+  process.exit(0);
+}
+
 async function main() {
   const transport = new StdioServerTransport();
+
+  // The client disconnecting closes the transport; treat that as shutdown.
+  transport.onclose = () => {
+    void shutdown('transport closed');
+  };
+
   await server.connect(transport);
 
-  logger.info('HashPilot MCP Server (OPTIMIZED) running', {
+  // StdioServerTransport only subscribes to stdin's 'data' and 'error' events,
+  // so `onclose` above never fires when the client simply goes away and closes
+  // the pipe. Watch for end-of-input directly.
+  process.stdin.on('end', () => {
+    void shutdown('stdin ended');
+  });
+  process.stdin.on('close', () => {
+    void shutdown('stdin closed');
+  });
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      void shutdown(signal);
+    });
+  }
+
+  logger.info('HashPilot MCP Server running', {
     toolCount: optimizedToolDefinitions.length,
-    version: '0.2.0-optimized',
+    version: SERVER_VERSION,
   });
 }
 

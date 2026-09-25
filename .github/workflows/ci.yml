@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Lint (non-blocking until the zod schema migration lands)
+        run: npm run lint || true
+
+  smoke:
+    name: Read-only smoke test against testnet
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # No credentials: every check here is a free Mirror Node or relay read.
+      - run: npm run smoke
+        env:
+          HEDERA_NETWORK: testnet
+
+  sources:
+    name: Documentation sources reachable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Catches the failure mode that silently shrank the index before: Hedera
+      # SDK repositories moving org, or doc files being renamed.
+      - run: npm run check:sources
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    # Reported, not blocking: the high and critical advisories all come from
+    # dependencies (@hashgraph/sdk, the Stablecoin Studio SDK, ethers 5, axios),
+    # not HashPilot's code. Tracked in MAINTENANCE.md for the dependency upgrade.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
