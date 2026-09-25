@@ -128,7 +128,9 @@ export async function stablecoinManage(args: {
                 ...result.data,
                 verification: {
                   tokenUrl: `${hashScanBase}/token/${result.tokenId}`,
-                  proxyContractUrl: result.proxyAddress ? `${hashScanBase}/contract/${result.proxyAddress}` : undefined,
+                  proxyContractUrl: result.proxyAddress
+                    ? `${hashScanBase}/contract/${result.proxyAddress}`
+                    : undefined,
                   message: `You can verify your stablecoin at: ${hashScanBase}/token/${result.tokenId}`,
                 },
               }
@@ -182,7 +184,11 @@ export async function stablecoinManage(args: {
           throw new Error('stablecoinId, targetAccount, and amount are required');
         }
 
-        const result = await stablecoinStudio.cashIn(args.stablecoinId, args.targetAccount, args.amount);
+        const result = await stablecoinStudio.cashIn(
+          args.stablecoinId,
+          args.targetAccount,
+          args.amount
+        );
 
         return {
           success: result.success,
@@ -228,7 +234,11 @@ export async function stablecoinManage(args: {
           throw new Error('stablecoinId, targetAccount, and amount are required');
         }
 
-        const result = await stablecoinStudio.wipe(args.stablecoinId, args.targetAccount, args.amount);
+        const result = await stablecoinStudio.wipe(
+          args.stablecoinId,
+          args.targetAccount,
+          args.amount
+        );
 
         return {
           success: result.success,
@@ -435,7 +445,11 @@ export async function stablecoinManage(args: {
           throw new Error('stablecoinId, targetAccount, and role are required');
         }
 
-        const result = await stablecoinStudio.grantRole(args.stablecoinId, args.role, args.targetAccount);
+        const result = await stablecoinStudio.grantRole(
+          args.stablecoinId,
+          args.role,
+          args.targetAccount
+        );
 
         return {
           success: result.success,
@@ -458,7 +472,11 @@ export async function stablecoinManage(args: {
           throw new Error('stablecoinId, targetAccount, and role are required');
         }
 
-        const result = await stablecoinStudio.revokeRole(args.stablecoinId, args.role, args.targetAccount);
+        const result = await stablecoinStudio.revokeRole(
+          args.stablecoinId,
+          args.role,
+          args.targetAccount
+        );
 
         return {
           success: result.success,
@@ -481,7 +499,11 @@ export async function stablecoinManage(args: {
           throw new Error('stablecoinId, targetAccount, and role are required');
         }
 
-        const result = await stablecoinStudio.checkRole(args.stablecoinId, args.role, args.targetAccount);
+        const result = await stablecoinStudio.checkRole(
+          args.stablecoinId,
+          args.role,
+          args.targetAccount
+        );
 
         return {
           success: result.success,
@@ -592,35 +614,78 @@ USE FOR: Institutional stablecoin issuance, compliance workflows, token lifecycl
         ],
         description: 'Stablecoin operation to perform',
       },
-      stablecoinId: { type: 'string', description: 'Stablecoin token ID (0.0.xxxxx) - required for most operations' },
-      targetAccount: { type: 'string', description: 'Target account ID for cashin/wipe/freeze/kyc/role operations' },
+      stablecoinId: {
+        type: 'string',
+        description: 'Stablecoin token ID (0.0.xxxxx) - required for most operations',
+      },
+      targetAccount: {
+        type: 'string',
+        description: 'Target account ID for cashin/wipe/freeze/kyc/role operations',
+      },
       amount: { type: 'string', description: 'Token amount as string (for precise decimals)' },
       // Create parameters
       name: { type: 'string', description: 'Stablecoin name (for create)' },
       symbol: { type: 'string', description: 'Token symbol (for create)' },
       decimals: { type: 'number', description: 'Decimal places (default: 6)' },
       initialSupply: { type: 'string', description: 'Initial supply (default: 0)' },
-      maxSupply: { type: 'string', description: 'Maximum supply (optional, for FINITE supply type)' },
+      maxSupply: {
+        type: 'string',
+        description: 'Maximum supply (optional, for FINITE supply type)',
+      },
       memo: { type: 'string', description: 'Token memo' },
-      freezeDefault: { type: 'boolean', description: 'Freeze accounts by default (default: false)' },
-      supplyType: { type: 'string', enum: ['INFINITE', 'FINITE'], description: 'Supply type (default: INFINITE)' },
+      freezeDefault: {
+        type: 'boolean',
+        description: 'Freeze accounts by default (default: false)',
+      },
+      supplyType: {
+        type: 'string',
+        enum: ['INFINITE', 'FINITE'],
+        description: 'Supply type (default: INFINITE)',
+      },
       // Role accounts
-      cashInRoleAccount: { type: 'string', description: 'Account with CASHIN role (default: operator)' },
-      burnRoleAccount: { type: 'string', description: 'Account with BURN role (default: operator)' },
-      wipeRoleAccount: { type: 'string', description: 'Account with WIPE role (default: operator)' },
-      rescueRoleAccount: { type: 'string', description: 'Account with RESCUE role (default: operator)' },
-      pauseRoleAccount: { type: 'string', description: 'Account with PAUSE role (default: operator)' },
-      freezeRoleAccount: { type: 'string', description: 'Account with FREEZE role (default: operator)' },
+      cashInRoleAccount: {
+        type: 'string',
+        description: 'Account with CASHIN role (default: operator)',
+      },
+      burnRoleAccount: {
+        type: 'string',
+        description: 'Account with BURN role (default: operator)',
+      },
+      wipeRoleAccount: {
+        type: 'string',
+        description: 'Account with WIPE role (default: operator)',
+      },
+      rescueRoleAccount: {
+        type: 'string',
+        description: 'Account with RESCUE role (default: operator)',
+      },
+      pauseRoleAccount: {
+        type: 'string',
+        description: 'Account with PAUSE role (default: operator)',
+      },
+      freezeRoleAccount: {
+        type: 'string',
+        description: 'Account with FREEZE role (default: operator)',
+      },
       kycRoleAccount: { type: 'string', description: 'Account with KYC role (default: operator)' },
-      deleteRoleAccount: { type: 'string', description: 'Account with DELETE role (default: operator)' },
+      deleteRoleAccount: {
+        type: 'string',
+        description: 'Account with DELETE role (default: operator)',
+      },
       // Cash-in limits
-      cashInAllowance: { type: 'string', description: 'Cash-in allowance limit (default: unlimited)' },
+      cashInAllowance: {
+        type: 'string',
+        description: 'Cash-in allowance limit (default: unlimited)',
+      },
       // Reserve
       createReserve: { type: 'boolean', description: 'Create proof-of-reserve contract' },
       reserveInitialAmount: { type: 'string', description: 'Initial reserve amount' },
       reserveAddress: { type: 'string', description: 'Existing reserve contract address' },
       // Proxy
-      proxyAdminOwnerAccount: { type: 'string', description: 'Proxy admin owner (default: operator)' },
+      proxyAdminOwnerAccount: {
+        type: 'string',
+        description: 'Proxy admin owner (default: operator)',
+      },
       // Role operations
       role: {
         type: 'string',
@@ -628,7 +693,11 @@ USE FOR: Institutional stablecoin issuance, compliance workflows, token lifecycl
         description: 'Role for grant/revoke/check operations',
       },
       // Network
-      network: { type: 'string', enum: ['mainnet', 'testnet', 'previewnet'], description: 'Network (auto-detected from config)' },
+      network: {
+        type: 'string',
+        enum: ['mainnet', 'testnet', 'previewnet'],
+        description: 'Network (auto-detected from config)',
+      },
     },
     required: ['operation'],
   },

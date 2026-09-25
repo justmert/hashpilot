@@ -5,6 +5,7 @@
  */
 
 import { jsonRpcService } from '../services/json-rpc-service.js';
+import { advisoriesFor } from '../services/error-analyzer.js';
 import logger from '../utils/logger.js';
 import { ToolResult } from '../types/index.js';
 
@@ -107,6 +108,7 @@ export async function rpcDeployContract(args: {
       metadata: {
         executedVia: 'json_rpc_relay',
         command: 'contract deploy',
+        advisories: advisoriesFor('rpc_deploy_contract', { network: args.network }),
       },
     };
   } catch (error) {
@@ -229,6 +231,7 @@ export async function rpcExecuteContract(args: {
       metadata: {
         executedVia: 'json_rpc_relay',
         command: 'contract execute',
+        advisories: advisoriesFor('rpc_execute_contract', { network: args.network }),
       },
     };
   } catch (error) {

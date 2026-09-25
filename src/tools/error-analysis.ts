@@ -34,7 +34,8 @@ EXAMPLES:
     properties: {
       errorCode: {
         type: 'string',
-        description: 'Hedera error code to explain (e.g., INSUFFICIENT_PAYER_BALANCE, TOKEN_NOT_ASSOCIATED_TO_ACCOUNT)',
+        description:
+          'Hedera error code to explain (e.g., INSUFFICIENT_PAYER_BALANCE, TOKEN_NOT_ASSOCIATED_TO_ACCOUNT)',
       },
       errorMessage: {
         type: 'string',
@@ -42,7 +43,16 @@ EXAMPLES:
       },
       category: {
         type: 'string',
-        enum: ['account', 'token', 'contract', 'consensus', 'network', 'transaction', 'key', 'file'],
+        enum: [
+          'account',
+          'token',
+          'contract',
+          'consensus',
+          'network',
+          'transaction',
+          'key',
+          'file',
+        ],
         description: 'List all errors in a specific category',
       },
       search: {
@@ -138,7 +148,15 @@ export async function errorExplain(args: {
           data: {
             suggestion: 'Try one of these similar errors:',
             similarErrors: similar.slice(0, 5).map((e) => e.code),
-            availableCategories: ['account', 'token', 'contract', 'consensus', 'network', 'transaction', 'key'],
+            availableCategories: [
+              'account',
+              'token',
+              'contract',
+              'consensus',
+              'network',
+              'transaction',
+              'key',
+            ],
           },
         };
       }
@@ -161,7 +179,15 @@ export async function errorExplain(args: {
     }
 
     // No input provided - return available error codes summary
-    const categories = ['account', 'token', 'contract', 'consensus', 'network', 'transaction', 'key'] as const;
+    const categories = [
+      'account',
+      'token',
+      'contract',
+      'consensus',
+      'network',
+      'transaction',
+      'key',
+    ] as const;
     const summary = categories.map((cat) => ({
       category: cat,
       count: getErrorsByCategory(cat).length,

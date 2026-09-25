@@ -10,38 +10,65 @@
 import { logger } from '../utils/logger.js';
 import { getHederaConfig } from '../utils/config.js';
 
-// Factory contract addresses per network (Stablecoin Studio v2.1.6)
-// Reference: https://github.com/hashgraph/stablecoin-studio/blob/main/FACTORY_VERSION.md
-const FACTORY_ADDRESSES: Record<string, string> = {
-  testnet: '0.0.6431833', // v2.1.6 - verified on testnet Mirror Node
-  mainnet: '0.0.786931', // Update when mainnet v2.1.6 is deployed
-  previewnet: '0.0.6431833', // Same as testnet for now
+import { parseOperatorKey } from '../utils/key-converter.js';
+
+/**
+ * Stablecoin Studio contract set for a network.
+ *
+ * Only testnet addresses are published by the project
+ * (documentation/FACTORY_VERSION.md and RESOLVER_VERSION.md in
+ * hashgraph/stablecoin-studio). The v2.1.6 pair below matches the 2.x SDK
+ * this package depends on; the current v4.0.0 pair (factory 0.0.7353542,
+ * resolver 0.0.7353500) requires SDK 4.x. Mainnet and previewnet have no
+ * published addresses and must be supplied through environment variables.
+ */
+interface StablecoinContracts {
+  factoryAddress: string;
+  resolverAddress: string;
+  configId: string;
+  configVersion: number;
+}
+
+const KNOWN_CONTRACTS: Record<string, StablecoinContracts> = {
+  testnet: {
+    factoryAddress: '0.0.6431833', // v2.1.6, verified on testnet Mirror Node
+    resolverAddress: '0.0.6431794', // v2.1.6, verified on testnet Mirror Node
+    configId: '0x0000000000000000000000000000000000000000000000000000000000000002',
+    configVersion: 0,
+  },
 };
 
-// Factory configuration - bytes32 format (from factory contract)
-// v2.1.6 factory uses configId=2 based on successful transactions
-const FACTORY_CONFIG_IDS: Record<string, string> = {
-  testnet: '0x0000000000000000000000000000000000000000000000000000000000000002',
-  mainnet: '0x0000000000000000000000000000000000000000000000000000000000000001',
-  previewnet: '0x0000000000000000000000000000000000000000000000000000000000000002',
-};
+/**
+ * Resolve the contract set for a network. Environment variables win so that
+ * operators can point at a factory the project has not published (mainnet,
+ * previewnet after a reset, or a newer testnet deployment).
+ */
+function resolveStablecoinContracts(network: string): StablecoinContracts {
+  const env = process.env;
+  const known = KNOWN_CONTRACTS[network];
 
-// Factory configuration versions
-// v2.1.6 factory uses configVersion=0 based on successful transactions
-const FACTORY_CONFIG_VERSIONS: Record<string, number> = {
-  testnet: 0,
-  mainnet: 1, // Update when mainnet v2.1.6 is deployed
-  previewnet: 0,
-};
+  const factoryAddress = env.STABLECOIN_FACTORY_ADDRESS || known?.factoryAddress;
+  const resolverAddress = env.STABLECOIN_RESOLVER_ADDRESS || known?.resolverAddress;
 
-// Business Logic Resolver contract addresses per network (Stablecoin Studio v2.1.6)
-// Reference: https://github.com/hashgraph/stablecoin-studio/blob/main/RESOLVER_VERSION.md
-// Required by Stablecoin Studio SDK for Diamond pattern architecture
-const RESOLVER_ADDRESSES: Record<string, string> = {
-  testnet: '0.0.6431794', // v2.1.6 - verified on testnet Mirror Node
-  mainnet: '0.0.786930', // Update when mainnet v2.1.6 is deployed
-  previewnet: '0.0.6431794', // Same as testnet for now
-};
+  if (!factoryAddress || !resolverAddress) {
+    throw new Error(
+      `Stablecoin Studio has no published factory/resolver contracts for ${network}. ` +
+        'Set STABLECOIN_FACTORY_ADDRESS and STABLECOIN_RESOLVER_ADDRESS (and optionally ' +
+        'STABLECOIN_CONFIG_ID / STABLECOIN_CONFIG_VERSION) in the MCP environment. See ' +
+        'https://github.com/hashgraph/stablecoin-studio/blob/main/documentation/FACTORY_VERSION.md'
+    );
+  }
+
+  return {
+    factoryAddress,
+    resolverAddress,
+    configId: env.STABLECOIN_CONFIG_ID || known?.configId || KNOWN_CONTRACTS.testnet.configId,
+    configVersion:
+      env.STABLECOIN_CONFIG_VERSION !== undefined
+        ? parseInt(env.STABLECOIN_CONFIG_VERSION, 10)
+        : (known?.configVersion ?? KNOWN_CONTRACTS.testnet.configVersion),
+  };
+}
 
 /**
  * Stablecoin creation parameters
@@ -96,6 +123,7 @@ class StablecoinStudioService {
   private initialized = false;
   private network: string = 'testnet';
   private SDK: any = null;
+  private contracts: StablecoinContracts | null = null;
 
   /**
    * Initialize the SDK with MCP operator account
@@ -116,17 +144,9 @@ class StablecoinStudioService {
       const config = getHederaConfig();
       this.network = network || config.network || 'testnet';
 
-      const factoryAddress = FACTORY_ADDRESSES[this.network];
-      if (!factoryAddress) {
-        throw new Error(`No factory address configured for network: ${this.network}`);
-      }
-
-      const resolverAddress = RESOLVER_ADDRESSES[this.network];
-      if (!resolverAddress) {
-        throw new Error(
-          `No resolver address configured for network: ${this.network}`
-        );
-      }
+      const contracts = resolveStablecoinContracts(this.network);
+      this.contracts = contracts;
+      const { factoryAddress, resolverAddress } = contracts;
 
       // Initialize network with configuration included
       // Both factoryAddress and resolverAddress are required by SDK v2.1.5
@@ -154,12 +174,15 @@ class StablecoinStudioService {
         throw new Error('MCP operator account not configured');
       }
 
+      // The SDK selects the curve from `type` and parses `key` as raw hex,
+      // so normalise whatever format the operator supplied (DER or hex).
+      const operatorKey = parseOperatorKey(config.operatorKey).key;
       const connectRequest = new this.SDK.ConnectRequest({
         account: {
           accountId: config.operatorId,
           privateKey: {
-            key: config.operatorKey,
-            type: 'DER', // Our config uses DER format
+            key: operatorKey.toStringRaw(),
+            type: operatorKey.type === 'ED25519' ? 'ED25519' : 'ECDSA',
           },
         },
         network: this.network,
@@ -223,9 +246,7 @@ class StablecoinStudioService {
       // Verify factory configuration before attempting creation
       const factoryAddress = this.SDK.Network.getFactoryAddress();
       if (!factoryAddress) {
-        throw new Error(
-          'Factory address not configured. SDK may not be properly initialized.'
-        );
+        throw new Error('Factory address not configured. SDK may not be properly initialized.');
       }
       logger.info('Creating stablecoin with factory', { factoryAddress });
 
@@ -240,7 +261,10 @@ class StablecoinStudioService {
         maxSupply: params.maxSupply,
         memo: params.memo || `Created via HashPilot MCP`,
         freezeDefault: params.freezeDefault || false,
-        supplyType: params.supplyType === 'FINITE' ? this.SDK.TokenSupplyType.FINITE : this.SDK.TokenSupplyType.INFINITE,
+        supplyType:
+          params.supplyType === 'FINITE'
+            ? this.SDK.TokenSupplyType.FINITE
+            : this.SDK.TokenSupplyType.INFINITE,
         // Use operator account for all roles by default
         cashInRoleAccount: params.cashInRoleAccount || operatorId,
         burnRoleAccount: params.burnRoleAccount || operatorId,
@@ -259,10 +283,10 @@ class StablecoinStudioService {
         // Proxy admin owner (SDK uses proxyOwnerAccount)
         proxyOwnerAccount: params.proxyAdminOwnerAccount || operatorId,
         // Factory configuration (required by SDK)
-        configId: FACTORY_CONFIG_IDS[this.network],
-        configVersion: FACTORY_CONFIG_VERSIONS[this.network],
+        configId: this.contracts?.configId,
+        configVersion: this.contracts?.configVersion,
         // Stablecoin factory address
-        stableCoinFactory: FACTORY_ADDRESSES[this.network],
+        stableCoinFactory: this.contracts?.factoryAddress,
       });
 
       const result = await this.SDK.StableCoin.create(createRequest);
@@ -528,7 +552,8 @@ class StablecoinStudioService {
     await this.ensureInitialized();
 
     try {
-      const request = new this.SDK.UnFreezeAccountRequest({
+      // The SDK has no UnFreezeAccountRequest; unfreeze reuses FreezeAccountRequest
+      const request = new this.SDK.FreezeAccountRequest({
         tokenId,
         targetId: targetAccount,
       });
@@ -590,7 +615,8 @@ class StablecoinStudioService {
     await this.ensureInitialized();
 
     try {
-      const request = new this.SDK.UnPauseRequest({
+      // The SDK has no UnPauseRequest; unpause reuses PauseRequest
+      const request = new this.SDK.PauseRequest({
         tokenId,
       });
 
@@ -715,7 +741,11 @@ class StablecoinStudioService {
   /**
    * Revoke a role from an account
    */
-  async revokeRole(tokenId: string, role: string, targetAccount: string): Promise<StablecoinResult> {
+  async revokeRole(
+    tokenId: string,
+    role: string,
+    targetAccount: string
+  ): Promise<StablecoinResult> {
     await this.ensureInitialized();
 
     try {

@@ -17,7 +17,7 @@ const CHAIN_IDS: Record<string, number> = {
   mainnet: 295,
   testnet: 296,
   previewnet: 297,
-  local: 1337, // Custom for local development
+  local: 298, // Hedera local node / Solo chain ID
 };
 
 /**
@@ -307,7 +307,9 @@ export class JsonRpcService {
     if (!privateKey && options.fromAlias) {
       const account = addressBook.get(options.fromAlias);
       if (!account || !account.privateKey) {
-        throw new Error(`Account with alias "${options.fromAlias}" not found or has no private key`);
+        throw new Error(
+          `Account with alias "${options.fromAlias}" not found or has no private key`
+        );
       }
       privateKey = account.privateKey;
     }
@@ -327,7 +329,9 @@ export class JsonRpcService {
     }
 
     if (!privateKey) {
-      throw new Error('Private key required for contract deployment. Configure HEDERA_OPERATOR_KEY or provide privateKey parameter.');
+      throw new Error(
+        'Private key required for contract deployment. Configure HEDERA_OPERATOR_KEY or provide privateKey parameter.'
+      );
     }
 
     // Create wallet
@@ -348,7 +352,11 @@ export class JsonRpcService {
     }
 
     // Get nonce
-    const nonce = await this.call('eth_getTransactionCount', [fromAddress, 'latest'], targetNetwork);
+    const nonce = await this.call(
+      'eth_getTransactionCount',
+      [fromAddress, 'latest'],
+      targetNetwork
+    );
 
     // Estimate gas
     let gasLimit = options.gasLimit;
@@ -510,7 +518,9 @@ export class JsonRpcService {
     }
 
     if (!privateKey) {
-      throw new Error('Private key required for contract execution. Configure HEDERA_OPERATOR_KEY or provide privateKey parameter.');
+      throw new Error(
+        'Private key required for contract execution. Configure HEDERA_OPERATOR_KEY or provide privateKey parameter.'
+      );
     }
 
     // Create wallet and interface
@@ -529,7 +539,11 @@ export class JsonRpcService {
     });
 
     // Get nonce
-    const nonce = await this.call('eth_getTransactionCount', [fromAddress, 'latest'], targetNetwork);
+    const nonce = await this.call(
+      'eth_getTransactionCount',
+      [fromAddress, 'latest'],
+      targetNetwork
+    );
 
     // Estimate gas
     let gasLimit = options.gasLimit;

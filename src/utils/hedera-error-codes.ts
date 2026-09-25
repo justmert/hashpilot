@@ -11,7 +11,8 @@ export interface ErrorInfo {
   description: string;
   cause: string;
   solution: string;
-  category: 'account' | 'token' | 'contract' | 'consensus' | 'network' | 'transaction' | 'key' | 'file';
+  category:
+    'account' | 'token' | 'contract' | 'consensus' | 'network' | 'transaction' | 'key' | 'file';
 }
 
 /**
@@ -67,7 +68,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Account Is Immutable',
     description: 'The account cannot be modified because it has no admin key.',
     cause: 'Trying to update an account that was created without an admin key.',
-    solution: 'This account cannot be modified. Create a new account with an admin key if mutability is needed.',
+    solution:
+      'This account cannot be modified. Create a new account with an admin key if mutability is needed.',
     category: 'account',
   },
 
@@ -79,7 +81,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Invalid Signature',
     description: 'The transaction signature is invalid or missing.',
     cause: 'The private key used does not match the required signing key for the account.',
-    solution: 'Verify you are using the correct private key for the account. Check key format (DER vs raw).',
+    solution:
+      'Verify you are using the correct private key for the account. Check key format (DER vs raw).',
     category: 'key',
   },
   INVALID_PAYER_SIGNATURE: {
@@ -111,7 +114,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Key Required',
     description: 'This operation requires a key that is not set on the entity.',
     cause: 'Trying to perform an operation that requires a key (e.g., mint without supply key).',
-    solution: 'The token/account was created without the required key. Create a new entity with the key enabled.',
+    solution:
+      'The token/account was created without the required key. Create a new entity with the key enabled.',
     category: 'key',
   },
 
@@ -123,7 +127,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Token Not Associated',
     description: 'The token is not associated with the target account.',
     cause: 'Trying to transfer tokens to an account that has not associated with the token.',
-    solution: 'Associate the token with the account first using token_manage with operation: "associate".',
+    solution:
+      'Associate the token with the account first using token_manage with operation: "associate".',
     category: 'token',
   },
   TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT: {
@@ -155,7 +160,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Token Has No Supply Key',
     description: 'Cannot mint or burn because the token has no supply key.',
     cause: 'The token was created without a supply key.',
-    solution: 'This token cannot have its supply modified. Create a new token with supplyKey enabled.',
+    solution:
+      'This token cannot have its supply modified. Create a new token with supplyKey enabled.',
     category: 'token',
   },
   TOKEN_HAS_NO_FREEZE_KEY: {
@@ -239,7 +245,8 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     name: 'Contract Reverted',
     description: 'The smart contract execution reverted.',
     cause: 'The contract logic failed a require/revert condition.',
-    solution: 'Check contract inputs, verify conditions are met (e.g., ownership, balances, timing).',
+    solution:
+      'Check contract inputs, verify conditions are met (e.g., ownership, balances, timing).',
     category: 'contract',
   },
   INVALID_CONTRACT_ID: {
@@ -489,6 +496,36 @@ export const HEDERA_ERROR_CODES: Record<string, ErrorInfo> = {
     cause: 'The max transaction fee is lower than required.',
     solution: 'Increase the max transaction fee for this operation.',
     category: 'transaction',
+  },
+  INVALID_ACCOUNT_ID: {
+    code: 'INVALID_ACCOUNT_ID',
+    name: 'Invalid Account ID',
+    description:
+      'The account ID is malformed or refers to an account that does not exist on this network.',
+    cause:
+      'The ID is not in shard.realm.num form (for example 0.0.12345), was copied from a different network, or the account was never created.',
+    solution:
+      'Use the 0.0.x form and check the account exists on the current network with account_info; switch networks with network_switch if it was created elsewhere.',
+    category: 'account',
+  },
+  INVALID_TRANSACTION_START: {
+    code: 'INVALID_TRANSACTION_START',
+    name: 'Invalid Transaction Start',
+    description: 'The transaction start time is outside the window the network accepts.',
+    cause: 'The local clock is skewed, or a transaction was built long before it was submitted.',
+    solution:
+      'Sync the system clock (NTP) and build transactions immediately before executing them.',
+    category: 'transaction',
+  },
+  INVALID_TOKEN_MINT_AMOUNT: {
+    code: 'INVALID_TOKEN_MINT_AMOUNT',
+    name: 'Invalid Token Mint Amount',
+    description: 'The mint amount is not valid for this token.',
+    cause:
+      'Minting zero or a negative amount, minting units for an NFT collection instead of metadata, or exceeding the maximum supply of a finite token.',
+    solution:
+      'Mint a positive amount within the remaining supply; for NFTs pass metadata entries instead of an amount.',
+    category: 'token',
   },
 };
 

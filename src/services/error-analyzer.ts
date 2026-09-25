@@ -42,7 +42,8 @@ export interface ErrorAnalysis {
 const SECURITY_PATTERNS = {
   keyExposure: {
     pattern: /private[_-]?key|secret|mnemonic|seed/i,
-    recommendation: 'Never expose private keys in logs or error messages. Use environment variables.',
+    recommendation:
+      'Never expose private keys in logs or error messages. Use environment variables.',
   },
   hardcodedCredentials: {
     pattern: /0x[a-fA-F0-9]{64}|302[0-9a-fA-F]{60,}/,
@@ -157,12 +158,7 @@ class ErrorAnalyzerService {
     ];
 
     // Medium severity errors
-    const mediumPatterns = [
-      /NOT_ASSOCIATED/i,
-      /FROZEN/i,
-      /PAUSED/i,
-      /KYC_NOT_GRANTED/i,
-    ];
+    const mediumPatterns = [/NOT_ASSOCIATED/i, /FROZEN/i, /PAUSED/i, /KYC_NOT_GRANTED/i];
 
     const fullText = `${errorCode || ''} ${errorMessage}`;
 
@@ -369,10 +365,7 @@ Error: ${errorMessage}
 
     // Find errors in the same category
     const categoryErrors = Object.entries(HEDERA_ERROR_CODES)
-      .filter(
-        ([code, info]) =>
-          info.category === errorInfo.category && code !== errorCode
-      )
+      .filter(([code, info]) => info.category === errorInfo.category && code !== errorCode)
       .map(([code]) => code)
       .slice(0, 3);
 
@@ -389,30 +382,20 @@ Error: ${errorMessage}
     // Token creation security
     if (operation === 'token_create' || operation === 'create') {
       if (!params.adminKey) {
-        recommendations.push(
-          'Consider enabling adminKey for token updates and management.'
-        );
+        recommendations.push('Consider enabling adminKey for token updates and management.');
       }
       if (!params.freezeKey) {
-        recommendations.push(
-          'Consider enabling freezeKey for compliance and emergency response.'
-        );
+        recommendations.push('Consider enabling freezeKey for compliance and emergency response.');
       }
       if (!params.wipeKey) {
-        recommendations.push(
-          'Consider enabling wipeKey for regulatory compliance.'
-        );
+        recommendations.push('Consider enabling wipeKey for regulatory compliance.');
       }
     }
 
     // Account creation security
     if (operation === 'account_create') {
-      recommendations.push(
-        'Store the generated private key securely. It cannot be recovered.'
-      );
-      recommendations.push(
-        'Consider using a key management service for production.'
-      );
+      recommendations.push('Store the generated private key securely. It cannot be recovered.');
+      recommendations.push('Consider using a key management service for production.');
     }
 
     // Contract deployment security
@@ -433,32 +416,24 @@ Error: ${errorMessage}
 
     // Balance queries
     if (operation.includes('balance') || operation.includes('info')) {
-      suggestions.push(
-        'Use Mirror Node REST API for read operations (free, faster).'
-      );
+      suggestions.push('Use Mirror Node REST API for read operations (free, faster).');
     }
 
     // Multiple transfers
     if (operation === 'transfer_hbar' || operation === 'token_transfer') {
-      suggestions.push(
-        'Batch multiple transfers in a single transaction to save fees.'
-      );
+      suggestions.push('Batch multiple transfers in a single transaction to save fees.');
     }
 
     // Contract calls
     if (operation.includes('contract')) {
       suggestions.push('Use eth_call for read-only operations (free).');
-      suggestions.push(
-        'Estimate gas before transactions: eth_estimateGas.'
-      );
+      suggestions.push('Estimate gas before transactions: eth_estimateGas.');
     }
 
     // HCS messages
     if (operation.includes('message') || operation.includes('topic')) {
       suggestions.push('Messages over 1KB will be automatically chunked.');
-      suggestions.push(
-        'Consider compression for large payloads.'
-      );
+      suggestions.push('Consider compression for large payloads.');
     }
 
     return suggestions;
@@ -471,4 +446,26 @@ export const errorAnalyzer = new ErrorAnalyzerService();
 // Export utility function for quick analysis
 export function analyzeError(error: Error | string): ErrorAnalysis {
   return errorAnalyzer.analyze(error);
+}
+
+/**
+ * Proactive advisories for an operation the user is about to perform or has
+ * just performed, independent of whether it failed.
+ *
+ * Attach the result to a tool's `metadata.advisories` so the assistant can
+ * relay Hedera-specific security and optimisation guidance (audit before
+ * deploying, prefer free Mirror Node reads, enable the keys you will need
+ * later) without the user having to hit an error first.
+ *
+ * Returns undefined when there is nothing worth saying, so callers can spread
+ * it into metadata without adding empty noise.
+ */
+export function advisoriesFor(
+  operation: string,
+  params: Record<string, unknown> = {}
+): { security: string[]; optimization: string[] } | undefined {
+  const security = errorAnalyzer.getSecurityRecommendations(operation, params);
+  const optimization = errorAnalyzer.getOptimizationSuggestions(operation, params);
+  if (security.length === 0 && optimization.length === 0) return undefined;
+  return { security, optimization };
 }

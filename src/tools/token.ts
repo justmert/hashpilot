@@ -3,51 +3,148 @@
  * Hedera Token Service operations
  */
 
-import { hederaClient } from '../services/hedera-client.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import {
+  hederaClient,
+  CUSTOM_FEES_SCHEMA,
+  KEY_SPEC_SCHEMA,
+  TokenCreateOptions,
+} from '../services/hedera-client.js';
 import { addressBook } from '../services/addressbook.js';
+import { advisoriesFor } from '../services/error-analyzer.js';
 import { ToolResult } from '../types/index.js';
 import logger from '../utils/logger.js';
 
+export type { CustomFeeSpec, KeySpec, TokenCreateOptions } from '../services/hedera-client.js';
+export { CUSTOM_FEES_SCHEMA, KEY_SPEC_SCHEMA } from '../services/hedera-client.js';
+
 /**
- * Custom fee type for token creation
+ * Fields a token JSON configuration file (or an inline `config` object) may
+ * carry. They mirror the arguments of a token create call exactly.
  */
-interface CustomFee {
-  feeType: 'fixed' | 'fractional' | 'royalty';
-  feeCollectorAccountId: string;
-  amount?: number;
-  denominatingTokenId?: string;
-  denominator?: number;
-  min?: number;
-  max?: number;
-  fallbackFee?: number;
+export const TOKEN_CONFIG_FIELDS = [
+  'name',
+  'symbol',
+  'decimals',
+  'initialSupply',
+  'treasuryAccountId',
+  'treasuryPrivateKey',
+  'tokenType',
+  'supplyType',
+  'maxSupply',
+  'adminKey',
+  'kycKey',
+  'freezeKey',
+  'wipeKey',
+  'supplyKey',
+  'pauseKey',
+  'feeScheduleKey',
+  'freezeDefault',
+  'customFees',
+  'memo',
+  'signerPrivateKeys',
+] as const;
+
+export type TokenConfigField = (typeof TOKEN_CONFIG_FIELDS)[number];
+
+/**
+ * Merge token configuration sources into one options object.
+ *
+ * Later configs win over earlier ones, and explicit tool arguments win over
+ * every config. Configs are validated strictly so a typo in a file is
+ * reported rather than silently ignored; `explicit` is filtered instead,
+ * because it also carries routing fields such as `operation`.
+ */
+export function mergeTokenConfig(
+  explicit: Record<string, unknown>,
+  ...configs: Array<Record<string, unknown> | undefined | null>
+): TokenCreateOptions {
+  const merged: Record<string, unknown> = {};
+
+  for (const config of configs) {
+    if (config === undefined || config === null) continue;
+    if (typeof config !== 'object' || Array.isArray(config)) {
+      throw new Error('Token configuration must be a JSON object');
+    }
+    const unknown = Object.keys(config).filter(
+      (key) => !(TOKEN_CONFIG_FIELDS as readonly string[]).includes(key)
+    );
+    if (unknown.length > 0) {
+      throw new Error(
+        `Unknown field(s) in token configuration: ${unknown.join(', ')}. ` +
+          `Valid fields: ${TOKEN_CONFIG_FIELDS.join(', ')}`
+      );
+    }
+    for (const [key, value] of Object.entries(config)) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+
+  for (const field of TOKEN_CONFIG_FIELDS) {
+    const value = explicit?.[field];
+    if (value !== undefined) merged[field] = value;
+  }
+
+  return merged as unknown as TokenCreateOptions;
 }
 
 /**
- * Create a new fungible token
+ * Read a token configuration JSON file from disk.
  */
-export async function createToken(args: {
-  name: string;
-  symbol: string;
-  decimals?: number;
-  initialSupply?: number;
-  treasuryAccountId?: string;
-  adminKey?: boolean;
-  kycKey?: boolean;
-  freezeKey?: boolean;
-  wipeKey?: boolean;
-  supplyKey?: boolean;
-  pauseKey?: boolean;
-  customFees?: CustomFee[];
-  memo?: string;
-}): Promise<ToolResult> {
+export async function loadTokenConfigFile(configPath: string): Promise<Record<string, unknown>> {
+  const resolved = path.resolve(configPath);
+
+  let raw: string;
   try {
-    logger.info('Creating token', { name: args.name, symbol: args.symbol });
+    raw = await fs.readFile(resolved, 'utf-8');
+  } catch (error) {
+    throw new Error(
+      `Could not read token config file ${resolved}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Token config file ${resolved} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Token config file ${resolved} must contain a JSON object`);
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Create a new token (fungible or non-fungible)
+ */
+export async function createToken(
+  args: Partial<TokenCreateOptions> & {
+    configPath?: string;
+    config?: Record<string, unknown>;
+  }
+): Promise<ToolResult> {
+  try {
+    const fileConfig = args.configPath ? await loadTokenConfigFile(args.configPath) : undefined;
+    const options = mergeTokenConfig(args as Record<string, unknown>, fileConfig, args.config);
+
+    logger.info('Creating token', {
+      name: options.name,
+      symbol: options.symbol,
+      tokenType: options.tokenType,
+      configPath: args.configPath,
+    });
 
     if (!hederaClient.isReady()) {
       await hederaClient.initialize();
     }
 
-    const result = await hederaClient.createToken(args);
+    const result = await hederaClient.createToken(options);
 
     return {
       success: true,
@@ -55,6 +152,16 @@ export async function createToken(args: {
       metadata: {
         executedVia: 'sdk',
         command: 'token create',
+        // Report the keys as actually resolved, so advice to enable a key
+        // only appears when the token really was created without it.
+        advisories: advisoriesFor('token_create', {
+          adminKey: options.adminKey,
+          freezeKey: options.freezeKey,
+          wipeKey: options.wipeKey,
+          supplyKey: options.supplyKey ?? true,
+          kycKey: options.kycKey,
+          pauseKey: options.pauseKey,
+        }),
       },
     };
   } catch (error) {
@@ -166,6 +273,7 @@ export async function transferToken(args: {
       metadata: {
         executedVia: 'sdk',
         command: 'token transfer',
+        advisories: advisoriesFor('token_transfer', {}),
       },
     };
   } catch (error) {
@@ -180,15 +288,27 @@ export async function transferToken(args: {
 /**
  * Mint additional token supply
  */
-export async function mintToken(args: { tokenId: string; amount: number }): Promise<ToolResult> {
+export async function mintToken(args: {
+  tokenId: string;
+  amount?: number;
+  metadata?: string[];
+  metadataEncoding?: 'utf8' | 'base64' | 'hex';
+}): Promise<ToolResult> {
   try {
-    logger.info('Minting tokens', { tokenId: args.tokenId, amount: args.amount });
+    logger.info('Minting tokens', {
+      tokenId: args.tokenId,
+      amount: args.amount,
+      metadataCount: args.metadata?.length ?? 0,
+    });
 
     if (!hederaClient.isReady()) {
       await hederaClient.initialize();
     }
 
-    const result = await hederaClient.mintToken(args.tokenId, args.amount);
+    const result = await hederaClient.mintToken(args.tokenId, args.amount, {
+      metadata: args.metadata,
+      metadataEncoding: args.metadataEncoding,
+    });
 
     return {
       success: true,
@@ -210,15 +330,25 @@ export async function mintToken(args: { tokenId: string; amount: number }): Prom
 /**
  * Burn token supply
  */
-export async function burnToken(args: { tokenId: string; amount: number }): Promise<ToolResult> {
+export async function burnToken(args: {
+  tokenId: string;
+  amount?: number;
+  serialNumbers?: number[];
+}): Promise<ToolResult> {
   try {
-    logger.info('Burning tokens', { tokenId: args.tokenId, amount: args.amount });
+    logger.info('Burning tokens', {
+      tokenId: args.tokenId,
+      amount: args.amount,
+      serialNumbers: args.serialNumbers,
+    });
 
     if (!hederaClient.isReady()) {
       await hederaClient.initialize();
     }
 
-    const result = await hederaClient.burnToken(args.tokenId, args.amount);
+    const result = await hederaClient.burnToken(args.tokenId, args.amount, {
+      serialNumbers: args.serialNumbers,
+    });
 
     return {
       success: true,
@@ -306,10 +436,7 @@ export async function unfreezeToken(args: {
 /**
  * Grant KYC status to an account for a token
  */
-export async function grantKyc(args: {
-  tokenId: string;
-  accountId: string;
-}): Promise<ToolResult> {
+export async function grantKyc(args: { tokenId: string; accountId: string }): Promise<ToolResult> {
   try {
     logger.info('Granting KYC', { tokenId: args.tokenId, accountId: args.accountId });
 
@@ -339,10 +466,7 @@ export async function grantKyc(args: {
 /**
  * Revoke KYC status from an account for a token
  */
-export async function revokeKyc(args: {
-  tokenId: string;
-  accountId: string;
-}): Promise<ToolResult> {
+export async function revokeKyc(args: { tokenId: string; accountId: string }): Promise<ToolResult> {
   try {
     logger.info('Revoking KYC', { tokenId: args.tokenId, accountId: args.accountId });
 
@@ -375,16 +499,24 @@ export async function revokeKyc(args: {
 export async function wipeToken(args: {
   tokenId: string;
   accountId: string;
-  amount: number;
+  amount?: number;
+  serialNumbers?: number[];
 }): Promise<ToolResult> {
   try {
-    logger.info('Wiping tokens', { tokenId: args.tokenId, accountId: args.accountId, amount: args.amount });
+    logger.info('Wiping tokens', {
+      tokenId: args.tokenId,
+      accountId: args.accountId,
+      amount: args.amount,
+      serialNumbers: args.serialNumbers,
+    });
 
     if (!hederaClient.isReady()) {
       await hederaClient.initialize();
     }
 
-    const result = await hederaClient.wipeToken(args.tokenId, args.accountId, args.amount);
+    const result = await hederaClient.wipeToken(args.tokenId, args.accountId, args.amount, {
+      serialNumbers: args.serialNumbers,
+    });
 
     return {
       success: true,
@@ -406,9 +538,7 @@ export async function wipeToken(args: {
 /**
  * Pause a token
  */
-export async function pauseToken(args: {
-  tokenId: string;
-}): Promise<ToolResult> {
+export async function pauseToken(args: { tokenId: string }): Promise<ToolResult> {
   try {
     logger.info('Pausing token', { tokenId: args.tokenId });
 
@@ -438,9 +568,7 @@ export async function pauseToken(args: {
 /**
  * Unpause a token
  */
-export async function unpauseToken(args: {
-  tokenId: string;
-}): Promise<ToolResult> {
+export async function unpauseToken(args: { tokenId: string }): Promise<ToolResult> {
   try {
     logger.info('Unpausing token', { tokenId: args.tokenId });
 
@@ -468,13 +596,47 @@ export async function unpauseToken(args: {
 }
 
 /**
+ * A key parameter: operator key (true), an explicit public key, or a
+ * threshold key list for multi-signature control.
+ */
+export function keyParameterSchema(purpose: string): Record<string, unknown> {
+  return {
+    ...KEY_SPEC_SCHEMA,
+    description: `${purpose}. true = operator key, a public key string (DER or raw hex), or { threshold, keys } for a multi-signature key list.`,
+  };
+}
+
+/** Documented example of the token JSON configuration file */
+export const TOKEN_CONFIG_EXAMPLE = `{
+  "name": "Acme Points",
+  "symbol": "ACME",
+  "tokenType": "fungible",
+  "decimals": 2,
+  "initialSupply": 100000,
+  "supplyType": "finite",
+  "maxSupply": 1000000,
+  "adminKey": true,
+  "supplyKey": { "threshold": 2, "keys": ["302a300506032b6570...", "302d300706052b8104..."] },
+  "customFees": [
+    { "type": "fixed", "amount": 100, "feeCollectorAccountId": "0.0.1234" },
+    { "type": "fractional", "numerator": 1, "denominator": 100, "minimumAmount": 1,
+      "maximumAmount": 500, "assessmentMethod": "inclusive", "feeCollectorAccountId": "0.0.1234" }
+  ],
+  "memo": "created by HashPilot"
+}`;
+
+/**
  * Get tool definitions for MCP server
  */
 export const tokenTools = [
   {
     name: 'token_create',
-    description:
-      'Create a new fungible token on Hedera with customizable properties. Treasury defaults to operator account. IMPORTANT: Token keys cannot be added later if not set during creation - this is a permanent decision.',
+    description: `Create a new token on Hedera - fungible or non-fungible - with custom fees, multi-signature keys and supply controls. Treasury defaults to the operator account. IMPORTANT: token keys cannot be added later if not set during creation.
+
+Every key (adminKey, supplyKey, freezeKey, wipeKey, kycKey, pauseKey, feeScheduleKey) accepts true (operator key), a public key string, or { threshold, keys } for a multi-signature key list.
+
+Fields may also come from a JSON file via configPath, or an inline config object. Explicit arguments win over config, and config wins over the file. Example file:
+${TOKEN_CONFIG_EXAMPLE}`,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -488,106 +650,82 @@ export const tokenTools = [
           description: 'Token symbol (max 100 characters, typically 3-5)',
           maxLength: 100,
         },
+        tokenType: {
+          type: 'string',
+          enum: ['fungible', 'nft'],
+          description:
+            'fungible (default) or nft. An nft must have decimals 0 and initialSupply 0; mint serials afterwards with metadata.',
+        },
         decimals: {
           type: 'number',
-          description: 'Number of decimal places (default: 0)',
+          description: 'Number of decimal places (default: 0, must be 0 for nft)',
           minimum: 0,
           maximum: 18,
           default: 0,
         },
         initialSupply: {
           type: 'number',
-          description: 'Initial token supply (default: 1000)',
+          description: 'Initial token supply (default: 1000 for fungible, must be 0 for nft)',
           minimum: 0,
-          default: 1000,
+        },
+        supplyType: {
+          type: 'string',
+          enum: ['finite', 'infinite'],
+          description:
+            'infinite (default) or finite. finite requires maxSupply; maxSupply implies finite.',
+        },
+        maxSupply: {
+          type: 'number',
+          description: 'Maximum supply, only with supplyType finite (NFT: maximum serials)',
+          minimum: 1,
         },
         treasuryAccountId: {
           type: 'string',
           description: 'Treasury account ID (defaults to operator account)',
           pattern: '^0\\.0\\.\\d+$',
         },
-        adminKey: {
-          type: 'boolean',
-          description: 'Enable admin key for token updates (default: true)',
-          default: true,
+        treasuryPrivateKey: {
+          type: 'string',
+          description:
+            'Private key of treasuryAccountId, required when the treasury is not the operator because that account must sign the create. DER or raw hex.',
         },
-        kycKey: {
-          type: 'boolean',
-          description: 'Enable KYC key - requires KYC grant before transfers (default: false)',
-          default: false,
-        },
-        freezeKey: {
-          type: 'boolean',
-          description: 'Enable freeze key - allows freezing accounts (default: false)',
-          default: false,
-        },
-        wipeKey: {
-          type: 'boolean',
-          description: 'Enable wipe key - allows wiping tokens from accounts (default: false)',
-          default: false,
-        },
+        adminKey: { ...keyParameterSchema('Admin key, allows later token updates') },
+        kycKey: { ...keyParameterSchema('KYC key, requires a KYC grant before transfers') },
+        freezeKey: { ...keyParameterSchema('Freeze key, allows freezing accounts') },
+        wipeKey: { ...keyParameterSchema('Wipe key, allows wiping tokens from accounts') },
         supplyKey: {
+          ...keyParameterSchema('Supply key, allows minting and burning (default: operator)'),
+        },
+        pauseKey: { ...keyParameterSchema('Pause key, allows pausing all token operations') },
+        feeScheduleKey: {
+          ...keyParameterSchema('Fee schedule key, allows updating the custom fees'),
+        },
+        freezeDefault: {
           type: 'boolean',
-          description: 'Enable supply key - allows minting/burning (default: true)',
-          default: true,
+          description: 'Freeze new associations by default (requires freezeKey)',
         },
-        pauseKey: {
-          type: 'boolean',
-          description: 'Enable pause key - allows pausing all token operations (default: false)',
-          default: false,
-        },
-        customFees: {
-          type: 'array',
-          description: 'Custom fees for the token (royalties, fixed fees, fractional fees)',
-          items: {
-            type: 'object',
-            properties: {
-              feeType: {
-                type: 'string',
-                enum: ['fixed', 'fractional', 'royalty'],
-                description: 'Type of custom fee',
-              },
-              feeCollectorAccountId: {
-                type: 'string',
-                description: 'Account ID to collect fees (format: 0.0.xxxxx)',
-                pattern: '^0\\.0\\.\\d+$',
-              },
-              amount: {
-                type: 'number',
-                description: 'For fixed fees: amount in tinybars or token units. For fractional: numerator.',
-              },
-              denominatingTokenId: {
-                type: 'string',
-                description: 'Token ID for fee denomination (for fixed fees in tokens)',
-                pattern: '^0\\.0\\.\\d+$',
-              },
-              denominator: {
-                type: 'number',
-                description: 'For fractional fees: denominator (e.g., 100 for percentage)',
-              },
-              min: {
-                type: 'number',
-                description: 'For fractional fees: minimum fee amount',
-              },
-              max: {
-                type: 'number',
-                description: 'For fractional fees: maximum fee amount',
-              },
-              fallbackFee: {
-                type: 'number',
-                description: 'For royalty fees: fallback fee in HBAR if no exchange value',
-              },
-            },
-            required: ['feeType', 'feeCollectorAccountId'],
-          },
-        },
+        customFees: { ...CUSTOM_FEES_SCHEMA },
         memo: {
           type: 'string',
           description: 'Optional token memo (max 100 characters)',
           maxLength: 100,
         },
+        signerPrivateKeys: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Extra private keys to sign the create with, needed when adminKey is a key you hold rather than the operator key',
+        },
+        configPath: {
+          type: 'string',
+          description: 'Path to a JSON file holding any of the fields above',
+        },
+        config: {
+          type: 'object',
+          description: 'Inline object holding any of the fields above',
+        },
       },
-      required: ['name', 'symbol'],
+      required: [],
     },
   },
   {
@@ -655,7 +793,7 @@ export const tokenTools = [
   {
     name: 'token_mint',
     description:
-      'Mint additional tokens and add them to the treasury account. Requires supply key to be enabled on the token. Operator must have the supply key.',
+      'Mint tokens into the treasury account. Fungible tokens: pass amount. Non-fungible tokens: pass metadata, one entry per serial (max 10 per call), and the new serial numbers are returned. Requires the supply key.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -666,17 +804,28 @@ export const tokenTools = [
         },
         amount: {
           type: 'number',
-          description: 'Amount to mint (in smallest unit based on token decimals)',
+          description: 'Fungible token: amount to mint (in smallest unit based on token decimals)',
           minimum: 1,
         },
+        metadata: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Non-fungible token: metadata for each serial to mint, commonly an IPFS CID (max 100 bytes each)',
+        },
+        metadataEncoding: {
+          type: 'string',
+          enum: ['utf8', 'base64', 'hex'],
+          description: 'How to read the metadata strings into bytes (default: utf8)',
+        },
       },
-      required: ['tokenId', 'amount'],
+      required: ['tokenId'],
     },
   },
   {
     name: 'token_burn',
     description:
-      'Burn tokens from the treasury account, reducing total supply. Requires supply key to be enabled on the token. Operator must have the supply key.',
+      'Burn tokens from the treasury account, reducing total supply. Fungible tokens: pass amount. Non-fungible tokens: pass serialNumbers. Requires the supply key.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -687,11 +836,16 @@ export const tokenTools = [
         },
         amount: {
           type: 'number',
-          description: 'Amount to burn (in smallest unit based on token decimals)',
+          description: 'Fungible token: amount to burn (in smallest unit based on token decimals)',
           minimum: 1,
         },
+        serialNumbers: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Non-fungible token: serial numbers to burn from the treasury',
+        },
       },
-      required: ['tokenId', 'amount'],
+      required: ['tokenId'],
     },
   },
   {
@@ -797,11 +951,16 @@ export const tokenTools = [
         },
         amount: {
           type: 'number',
-          description: 'Amount to wipe (in smallest unit based on token decimals)',
+          description: 'Fungible token: amount to wipe (in smallest unit based on token decimals)',
           minimum: 1,
         },
+        serialNumbers: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Non-fungible token: serial numbers to wipe from the account',
+        },
       },
-      required: ['tokenId', 'accountId', 'amount'],
+      required: ['tokenId', 'accountId'],
     },
   },
   {
