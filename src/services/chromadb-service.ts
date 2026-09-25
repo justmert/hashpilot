@@ -9,6 +9,7 @@ import { ChromaClient, Collection, IncludeEnum } from 'chromadb';
 import { Chunk, SearchResult, SearchFilters, CollectionConfig } from '../types/rag.js';
 import { INDEXING_CONFIG } from '../config/rag.js';
 import { logger } from '../utils/logger.js';
+import { stripLoneSurrogates } from '../utils/text.js';
 
 /**
  * ChromaDB connection configuration
@@ -26,7 +27,24 @@ export interface ChromaDBConfig {
   maxRetries?: number;
   /** Retry delay (ms) */
   retryDelay?: number;
+  /**
+   * Read-only mode: never create collections. Use for query paths that run
+   * with a read-only gateway token; indexers leave this false.
+   */
+  readOnly?: boolean;
 }
+
+/**
+ * Embeddings are computed by HashPilot (OpenAI) before they reach Chroma, so
+ * collections are opened with an embedding function that refuses to run.
+ */
+const externalEmbeddingFunction = {
+  generate: async (_texts: string[]): Promise<number[][]> => {
+    throw new Error(
+      'HashPilot computes embeddings itself; the collection embedding function must not be called'
+    );
+  },
+};
 
 /**
  * ChromaDB Service
@@ -41,21 +59,24 @@ export class ChromaDBService {
     timeout: number;
     maxRetries: number;
     retryDelay: number;
+    readOnly: boolean;
   };
 
   constructor(config: ChromaDBConfig) {
     this.config = {
-      url: config.url,
+      url: config.url.replace(/\/+$/, ''),
       authToken: config.authToken,
       defaultCollection: config.defaultCollection || 'hedera-docs-all',
       timeout: config.timeout || 30000,
       maxRetries: config.maxRetries || 3,
       retryDelay: config.retryDelay || 2000,
+      readOnly: config.readOnly ?? false,
     };
 
     logger.info('ChromaDBService initialized', {
       url: this.config.url,
       hasAuth: !!this.config.authToken,
+      readOnly: this.config.readOnly,
       defaultCollection: this.config.defaultCollection,
     });
   }
@@ -83,11 +104,13 @@ export class ChromaDBService {
         path: this.config.url,
       };
 
-      // Add authentication if token is provided
+      // Token is sent as X-Chroma-Token; the HashPilot gateway (docker/railway)
+      // accepts it and distinguishes read-only from admin tokens.
       if (this.config.authToken) {
         clientConfig.auth = {
           provider: 'token',
           credentials: this.config.authToken,
+          tokenHeaderType: 'X_CHROMA_TOKEN',
         };
       }
 
@@ -126,14 +149,14 @@ export class ChromaDBService {
     ];
 
     const errorMessage = error.message || String(error);
-    return retryablePatterns.some(pattern => errorMessage.includes(pattern));
+    return retryablePatterns.some((pattern) => errorMessage.includes(pattern));
   }
 
   /**
    * Sleep utility for retry delays
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -150,11 +173,30 @@ export class ChromaDBService {
     }
 
     try {
-      // Try to get existing collection
-      const collection = await this.client.getOrCreateCollection({
-        name: collectionConfig.name,
-        metadata: collectionConfig.metadata,
-      });
+      // Read path first: works with a read-only gateway token
+      let collection: Collection;
+      try {
+        collection = await this.client.getCollection({
+          name: collectionConfig.name,
+          embeddingFunction: externalEmbeddingFunction,
+        });
+      } catch (getError: any) {
+        if (this.config.readOnly) {
+          throw new Error(
+            `The documentation index "${collectionConfig.name}" is not available at ${this.config.url}. ` +
+              'The Hedera docs tools (docs_search, docs_ask, docs_get_example, code_generate) need an indexed ChromaDB collection. ' +
+              'If you are using your own CHROMA_URL, build the index with: ' +
+              'CHROMA_URL=<your server> CHROMA_AUTH_TOKEN=<admin token> OPENAI_API_KEY=sk-... npm run index-all. ' +
+              'Otherwise the hosted index is temporarily unavailable; every other HashPilot tool keeps working. ' +
+              `(underlying error: ${getError.message})`
+          );
+        }
+        collection = await this.client.getOrCreateCollection({
+          name: collectionConfig.name,
+          metadata: collectionConfig.metadata,
+          embeddingFunction: externalEmbeddingFunction,
+        });
+      }
 
       // Cache collection
       this.collections.set(collectionConfig.name, collection);
@@ -177,10 +219,7 @@ export class ChromaDBService {
   /**
    * Add chunks to collection (with batching to avoid payload limits)
    */
-  async addChunks(
-    chunks: Chunk[],
-    collectionName?: string,
-  ): Promise<void> {
+  async addChunks(chunks: Chunk[], collectionName?: string): Promise<void> {
     if (chunks.length === 0) {
       logger.warn('No chunks to add');
       return;
@@ -196,24 +235,27 @@ export class ChromaDBService {
         const batchNumber = Math.floor(i / batchSize) + 1;
         const batch = chunks.slice(i, i + batchSize);
 
-        const ids = batch.map(c => c.id);
-        const documents = batch.map(c => c.text);
-        const metadatas = batch.map(c => ({
+        const ids = batch.map((c) => c.id);
+        // Every string sent to Chroma is scrubbed of unpaired surrogates,
+        // which would otherwise make the whole batch invalid JSON.
+        const documents = batch.map((c) => stripLoneSurrogates(c.text));
+        const metadatas = batch.map((c) => ({
           documentId: c.documentId,
           chunkIndex: c.index,
           totalChunks: c.totalChunks,
-          url: c.metadata.url,
-          title: c.metadata.title,
+          url: stripLoneSurrogates(c.metadata.url),
+          title: stripLoneSurrogates(c.metadata.title),
           contentType: c.metadata.contentType,
           hasCode: c.metadata.hasCode,
-          tags: c.metadata.tags?.join(',') || '',
+          tags: stripLoneSurrogates(c.metadata.tags?.join(',') || ''),
           language: c.metadata.language || '',
           crawledAt: c.metadata.crawledAt,
-          sectionPath: c.metadata.sectionPath || '',
+          sectionPath: stripLoneSurrogates(c.metadata.sectionPath || ''),
         }));
-        const embeddings = batch.map(c => c.embedding!);
+        const embeddings = batch.map((c) => c.embedding!);
 
-        await collection.add({
+        // upsert keeps re-indexing idempotent (chunk ids are derived from the document id)
+        await collection.upsert({
           ids,
           documents,
           metadatas,
@@ -224,7 +266,7 @@ export class ChromaDBService {
           collection: collection.name,
           batch: `${batchNumber}/${totalBatches}`,
           batchSize: batch.length,
-          progress: `${Math.round((i + batch.length) / chunks.length * 100)}%`,
+          progress: `${Math.round(((i + batch.length) / chunks.length) * 100)}%`,
         });
       }
 
@@ -251,7 +293,9 @@ export class ChromaDBService {
       nResults?: number;
       filters?: SearchFilters;
       collectionName?: string;
-    } = {},
+      /** Only consider chunks whose text contains this exact string */
+      documentContains?: string;
+    } = {}
   ): Promise<SearchResult[]> {
     const collection = await this.getDefaultCollection(options.collectionName);
     const nResults = options.nResults || 5;
@@ -260,10 +304,16 @@ export class ChromaDBService {
       // Build where clause from filters
       const where = this.buildWhereClause(options.filters);
 
+      // Post-filtered fields are evaluated after retrieval, so ask for more
+      // rows than requested to avoid coming back short.
+      const postFilter = this.needsPostFilter(options.filters);
       const results = await collection.query({
         queryEmbeddings: [queryEmbedding],
-        nResults,
+        nResults: postFilter ? Math.min(nResults * 5, 200) : nResults,
         where: where || undefined,
+        whereDocument: options.documentContains
+          ? ({ $contains: options.documentContains } as any)
+          : undefined,
         include: [IncludeEnum.Documents, IncludeEnum.Metadatas, IncludeEnum.Distances],
       });
 
@@ -277,12 +327,18 @@ export class ChromaDBService {
           const metadata = results.metadatas?.[0]?.[i] || {};
           const distance = results.distances?.[0]?.[i] || 0;
 
-          // Convert distance to similarity score (cosine similarity)
-          // ChromaDB returns distance, we convert to similarity (1 - distance)
-          const score = 1 - distance;
+          // Convert distance to similarity score (cosine similarity).
+          // Cosine distance runs 0..2, so `1 - distance` goes negative for a
+          // chunk pointing away from the query. Callers render this as a
+          // percentage relevance, and results were being shown at -11%.
+          const score = Math.max(0, Math.min(1, 1 - distance));
 
           // Skip results below minimum score
           if (options.filters?.minScore && score < options.filters.minScore) {
+            continue;
+          }
+
+          if (postFilter && !this.matchesPostFilters(metadata, options.filters)) {
             continue;
           }
 
@@ -298,7 +354,7 @@ export class ChromaDBService {
               contentType: String(metadata.contentType || 'concept') as any,
               hasCode: Boolean(metadata.hasCode),
               tags: metadata.tags ? String(metadata.tags).split(',').filter(Boolean) : [],
-              language: metadata.language ? String(metadata.language) as any : undefined,
+              language: metadata.language ? (String(metadata.language) as any) : undefined,
               crawledAt: String(metadata.crawledAt || new Date().toISOString()),
               sectionPath: metadata.sectionPath ? String(metadata.sectionPath) : undefined,
               documentId: String(metadata.documentId || ''),
@@ -314,6 +370,11 @@ export class ChromaDBService {
             score,
             distance,
           });
+
+          // Stop once the caller's requested count is met from the over-fetch
+          if (postFilter && searchResults.length >= nResults) {
+            break;
+          }
         }
       }
 
@@ -341,39 +402,79 @@ export class ChromaDBService {
       return null;
     }
 
-    const where: Record<string, any> = {};
+    // ChromaDB's v2 API accepts exactly one operator per `where` object, so a
+    // multi-key object like `{ hasCode: true, language: 'go' }` is rejected
+    // outright. Conditions are collected and combined explicitly with `$and`.
+    // (An earlier workaround disabled the language filter instead, which made
+    // `docs_get_example` return whatever the embedding liked regardless of the
+    // language the caller asked for.)
+    const conditions: Record<string, any>[] = [];
 
     // Content type filter
     if (filters.contentType) {
-      if (Array.isArray(filters.contentType)) {
-        where.contentType = { $in: filters.contentType };
-      } else {
-        where.contentType = filters.contentType;
-      }
+      conditions.push({
+        contentType: Array.isArray(filters.contentType)
+          ? { $in: filters.contentType }
+          : { $eq: filters.contentType },
+      });
     }
 
-    // Language filter - skip for now due to ChromaDB compatibility issues
-    // Rely on semantic search to find language-specific content
-    // The query embedding will naturally prioritize language-relevant results
-    // if (filters.language) {
-    //   if (Array.isArray(filters.language)) {
-    //     where.language = { $in: filters.language };
-    //   } else {
-    //     where.language = filters.language;
-    //   }
-    // }
+    // Language filter
+    if (filters.language) {
+      conditions.push({
+        language: Array.isArray(filters.language)
+          ? { $in: filters.language }
+          : { $eq: filters.language },
+      });
+    }
 
     // Has code filter
     if (filters.hasCode !== undefined) {
-      where.hasCode = filters.hasCode;
+      conditions.push({ hasCode: { $eq: filters.hasCode } });
     }
 
-    // URL pattern filter
-    if (filters.urlPattern) {
-      where.url = { $contains: filters.urlPattern };
+    // Single-document filter
+    if (filters.documentId) {
+      conditions.push({ documentId: { $eq: filters.documentId } });
     }
 
-    return Object.keys(where).length > 0 ? where : null;
+    if (conditions.length === 0) {
+      return null;
+    }
+
+    return conditions.length === 1 ? conditions[0] : { $and: conditions };
+  }
+
+  /**
+   * Filters ChromaDB cannot express in a metadata `where` clause.
+   *
+   * Tags are stored as one comma-joined string and URL matching is a substring
+   * test, neither of which maps onto Chroma's metadata operators, so both are
+   * applied to the returned rows instead.
+   */
+  private needsPostFilter(filters?: SearchFilters): boolean {
+    return Boolean(filters?.urlPattern || filters?.tags?.length);
+  }
+
+  private matchesPostFilters(metadata: Record<string, any>, filters?: SearchFilters): boolean {
+    if (!filters) {
+      return true;
+    }
+
+    if (filters.urlPattern && !String(metadata.url || '').includes(filters.urlPattern)) {
+      return false;
+    }
+
+    if (filters.tags?.length) {
+      const tags = String(metadata.tags || '')
+        .split(',')
+        .filter(Boolean);
+      if (!filters.tags.every((tag) => tags.includes(tag))) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**

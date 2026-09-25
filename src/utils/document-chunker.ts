@@ -10,6 +10,7 @@ import { Document, Chunk, ChunkMetadata, ProgrammingLanguage } from '../types/ra
 import { CHUNKING_CONFIG } from '../config/rag.js';
 import { getTokenCounter } from './token-counter.js';
 import { logger } from './logger.js';
+import { stripLoneSurrogates } from './text.js';
 
 /**
  * Section in document structure
@@ -50,7 +51,7 @@ export class DocumentChunker {
         documentId: document.id,
         totalChunks: chunks.length,
         averageChunkSize: Math.round(
-          chunks.reduce((sum, c) => sum + this.tokenCounter.countTokens(c.text), 0) / chunks.length,
+          chunks.reduce((sum, c) => sum + this.tokenCounter.countTokens(c.text), 0) / chunks.length
         ),
       });
 
@@ -210,41 +211,47 @@ export class DocumentChunker {
       if (section.type === 'code' && sectionTokens > this.config.maxChunkSize) {
         // Flush current chunk
         if (currentChunk.length > 0) {
-          chunks.push(this.createChunk(
-            currentChunk.join('\n\n'),
-            chunkIndex++,
-            document,
-            currentSectionPath,
-            false,
-            undefined,
-          ));
+          chunks.push(
+            this.createChunk(
+              currentChunk.join('\n\n'),
+              chunkIndex++,
+              document,
+              currentSectionPath,
+              false,
+              undefined
+            )
+          );
           currentChunk = [];
           currentWordCount = 0;
         }
 
         // Add code block as its own chunk
-        chunks.push(this.createChunk(
-          section.content,
-          chunkIndex++,
-          document,
-          currentSectionPath,
-          true,
-          section.language ? [section.language] : undefined,
-        ));
+        chunks.push(
+          this.createChunk(
+            section.content,
+            chunkIndex++,
+            document,
+            currentSectionPath,
+            true,
+            section.language ? [section.language] : undefined
+          )
+        );
         continue;
       }
 
       // Check if adding this section would exceed max size
       if (currentWordCount + sectionTokens > this.config.maxChunkSize && currentChunk.length > 0) {
         // Create chunk from accumulated content
-        chunks.push(this.createChunk(
-          currentChunk.join('\n\n'),
-          chunkIndex++,
-          document,
-          currentSectionPath,
-          currentChunk.some(c => c.includes('```')),
-          this.extractCodeLanguages(currentChunk.join('\n\n')),
-        ));
+        chunks.push(
+          this.createChunk(
+            currentChunk.join('\n\n'),
+            chunkIndex++,
+            document,
+            currentSectionPath,
+            currentChunk.some((c) => c.includes('```')),
+            this.extractCodeLanguages(currentChunk.join('\n\n'))
+          )
+        );
 
         // Start new chunk with overlap
         if (this.config.overlapSize > 0 && currentChunk.length > 0) {
@@ -263,14 +270,16 @@ export class DocumentChunker {
 
       // Check if we've reached target size
       if (currentWordCount >= this.config.targetChunkSize) {
-        chunks.push(this.createChunk(
-          currentChunk.join('\n\n'),
-          chunkIndex++,
-          document,
-          currentSectionPath,
-          currentChunk.some(c => c.includes('```')),
-          this.extractCodeLanguages(currentChunk.join('\n\n')),
-        ));
+        chunks.push(
+          this.createChunk(
+            currentChunk.join('\n\n'),
+            chunkIndex++,
+            document,
+            currentSectionPath,
+            currentChunk.some((c) => c.includes('```')),
+            this.extractCodeLanguages(currentChunk.join('\n\n'))
+          )
+        );
 
         // Start new chunk with overlap
         if (this.config.overlapSize > 0) {
@@ -286,18 +295,20 @@ export class DocumentChunker {
 
     // Add remaining content as final chunk
     if (currentChunk.length > 0 && currentWordCount >= this.config.minChunkSize) {
-      chunks.push(this.createChunk(
-        currentChunk.join('\n\n'),
-        chunkIndex++,
-        document,
-        currentSectionPath,
-        currentChunk.some(c => c.includes('```')),
-        this.extractCodeLanguages(currentChunk.join('\n\n')),
-      ));
+      chunks.push(
+        this.createChunk(
+          currentChunk.join('\n\n'),
+          chunkIndex++,
+          document,
+          currentSectionPath,
+          currentChunk.some((c) => c.includes('```')),
+          this.extractCodeLanguages(currentChunk.join('\n\n'))
+        )
+      );
     }
 
     // Update total chunks count
-    return chunks.map(chunk => ({
+    return chunks.map((chunk) => ({
       ...chunk,
       totalChunks: chunks.length,
       metadata: {
@@ -316,7 +327,7 @@ export class DocumentChunker {
     document: Document,
     sectionPath: string[],
     hasCode: boolean,
-    codeLanguages?: ProgrammingLanguage[],
+    codeLanguages?: ProgrammingLanguage[]
   ): Chunk {
     // Hard limit: max 8000 tokens (model limit is 8192, leave buffer)
     // This prevents any chunk from being too large for embedding
@@ -337,7 +348,10 @@ export class DocumentChunker {
     return {
       id: `${document.id}-chunk-${index}`,
       documentId: document.id,
-      text,
+      // Scrubbed here so the text that gets embedded is the same text that is
+      // stored. Truncated multi-byte characters in fetched source files leave
+      // unpaired surrogates, which are not valid JSON for the vector store.
+      text: stripLoneSurrogates(text),
       index,
       totalChunks: 0, // Will be updated later
       metadata,
@@ -353,10 +367,43 @@ export class DocumentChunker {
       return text;
     }
 
-    // Get last N tokens from text
-    return this.tokenCounter.truncateToTokens(text, tokenCount).substring(
-      Math.max(0, text.length - Math.floor(text.length * (this.config.overlapSize / tokenCount)))
-    );
+    // Take whole trailing lines rather than a proportional character slice.
+    // The old slice cut mid-word ("onst txResponse = ...") and mid-code-block,
+    // so the following chunk opened with a broken identifier and an unpaired
+    // fence, which surfaced as truncated, mislabelled code examples.
+    const lines = text.split('\n');
+    const selected: string[] = [];
+    let tokens = 0;
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const lineTokens = this.tokenCounter.countTokens(lines[i]);
+      if (tokens + lineTokens > this.config.overlapSize && selected.length > 0) {
+        break;
+      }
+      selected.unshift(lines[i]);
+      tokens += lineTokens;
+    }
+
+    // If the overlap starts inside a fenced block it would carry that block's
+    // closing fence without its opener. Re-open the fence so the next chunk is
+    // still valid markdown and its language stays detectable.
+    const startLine = lines.length - selected.length;
+    let insideFence = false;
+    let fenceOpener = '';
+
+    for (let i = 0; i < startLine; i++) {
+      if (lines[i].startsWith('```')) {
+        if (insideFence) {
+          insideFence = false;
+        } else {
+          insideFence = true;
+          fenceOpener = lines[i];
+        }
+      }
+    }
+
+    const overlap = selected.join('\n');
+    return insideFence ? `${fenceOpener}\n${overlap}` : overlap;
   }
 
   /**
@@ -369,19 +416,19 @@ export class DocumentChunker {
     const lang = match[1].toLowerCase();
 
     const languageMap: Record<string, ProgrammingLanguage> = {
-      'javascript': 'javascript',
-      'js': 'javascript',
-      'typescript': 'typescript',
-      'ts': 'typescript',
-      'java': 'java',
-      'python': 'python',
-      'py': 'python',
-      'go': 'go',
-      'golang': 'go',
-      'solidity': 'solidity',
-      'sol': 'solidity',
-      'rust': 'rust',
-      'rs': 'rust',
+      javascript: 'javascript',
+      js: 'javascript',
+      typescript: 'typescript',
+      ts: 'typescript',
+      java: 'java',
+      python: 'python',
+      py: 'python',
+      go: 'go',
+      golang: 'go',
+      solidity: 'solidity',
+      sol: 'solidity',
+      rust: 'rust',
+      rs: 'rust',
     };
 
     return languageMap[lang];

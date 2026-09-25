@@ -55,13 +55,13 @@ export class FirecrawlService {
     if (isLocalUrl) {
       // Local Firecrawl instance
       this.firecrawl = new FirecrawlApp({
-        apiUrl: apiKeyOrUrl
+        apiUrl: apiKeyOrUrl,
       });
       logger.info('FirecrawlService initialized (local)', { url: apiKeyOrUrl });
     } else {
       // Cloud Firecrawl with API key
       this.firecrawl = new FirecrawlApp({
-        apiKey: apiKeyOrUrl
+        apiKey: apiKeyOrUrl,
       });
       logger.info('FirecrawlService initialized (cloud)');
     }
@@ -73,7 +73,8 @@ export class FirecrawlService {
   async crawlHederaDocs(options: CrawlOptions = {}): Promise<CrawlResult> {
     const maxPages = options.maxPages || FIRECRAWL_CONFIG.maxPages;
     const excludePatterns = options.excludePatterns || [...FIRECRAWL_CONFIG.excludePatterns];
-    const includePatterns = options.includePatterns || (FIRECRAWL_CONFIG as any).includePatterns || [];
+    const includePatterns =
+      options.includePatterns || (FIRECRAWL_CONFIG as any).includePatterns || [];
 
     logger.info('Starting Hedera documentation crawl', {
       maxPages,
@@ -182,11 +183,13 @@ export class FirecrawlService {
       }
 
       // Start crawl
-      const crawlResponse = await this.firecrawl.crawl(url, crawlParams) as any;
+      const crawlResponse = (await this.firecrawl.crawl(url, crawlParams)) as any;
 
       // Check if crawl was successful (status should be 'completed')
       if (crawlResponse.status !== 'completed' && !crawlResponse.data) {
-        throw new Error(`Crawl failed: ${crawlResponse.error || 'Status: ' + crawlResponse.status}`);
+        throw new Error(
+          `Crawl failed: ${crawlResponse.error || 'Status: ' + crawlResponse.status}`
+        );
       }
 
       // Process crawled pages
@@ -293,9 +296,7 @@ export class FirecrawlService {
       const lastPart = parts[parts.length - 1] || 'index';
 
       // Convert kebab-case to Title Case
-      return lastPart
-        .replace(/-/g, ' ')
-        .replace(/\b\w/g, char => char.toUpperCase());
+      return lastPart.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
     } catch {
       return 'Untitled Document';
     }
@@ -312,10 +313,18 @@ export class FirecrawlService {
       if (urlLower.includes('/examples/') || urlLower.includes('/example-')) {
         return 'example';
       }
-      if (urlLower.includes('/docs/') || urlLower.includes('/manual/') || urlLower.includes('readme')) {
+      if (
+        urlLower.includes('/docs/') ||
+        urlLower.includes('/manual/') ||
+        urlLower.includes('readme')
+      ) {
         return 'guide';
       }
-      if (urlLower.includes('contributing') || urlLower.includes('migration') || urlLower.includes('changelog')) {
+      if (
+        urlLower.includes('contributing') ||
+        urlLower.includes('migration') ||
+        urlLower.includes('changelog')
+      ) {
         return 'guide';
       }
     }
@@ -348,7 +357,7 @@ export class FirecrawlService {
 
     // Extract from URL path
     const urlParts = url.split('/').filter(Boolean);
-    urlParts.forEach(part => {
+    urlParts.forEach((part) => {
       if (part.length > 3 && !part.includes('.')) {
         tags.add(part.toLowerCase());
       }
@@ -372,7 +381,7 @@ export class FirecrawlService {
     ];
 
     const contentLower = content.toLowerCase();
-    hederaTerms.forEach(term => {
+    hederaTerms.forEach((term) => {
       if (contentLower.includes(term)) {
         tags.add(term.replace(/\s+/g, '-'));
       }
@@ -384,12 +393,19 @@ export class FirecrawlService {
   /**
    * Detect programming language from content and URL
    */
-  private detectLanguage(content: string, url?: string): 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity' | undefined {
+  private detectLanguage(
+    content: string,
+    url?: string
+  ): 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity' | undefined {
     // First check URL for SDK repository patterns
     if (url) {
       const urlLower = url.toLowerCase();
       // Check which SDK repository this is from
-      if (urlLower.includes('hedera-sdk-js') || urlLower.includes('.js') || urlLower.includes('.ts')) {
+      if (
+        urlLower.includes('hedera-sdk-js') ||
+        urlLower.includes('.js') ||
+        urlLower.includes('.ts')
+      ) {
         return urlLower.includes('.ts') ? 'typescript' : 'javascript';
       }
       if (urlLower.includes('hedera-sdk-java') || urlLower.includes('.java')) {
@@ -398,7 +414,11 @@ export class FirecrawlService {
       if (urlLower.includes('hedera-sdk-go') || urlLower.includes('.go')) {
         return 'go';
       }
-      if (urlLower.includes('hiero-sdk-python') || urlLower.includes('hedera-sdk-python') || urlLower.includes('.py')) {
+      if (
+        urlLower.includes('hiero-sdk-python') ||
+        urlLower.includes('hedera-sdk-python') ||
+        urlLower.includes('.py')
+      ) {
         return 'python';
       }
       if (urlLower.includes('hedera-sdk-rust') || urlLower.includes('.rs')) {
@@ -411,7 +431,9 @@ export class FirecrawlService {
     }
 
     // Then check content for code block markers
-    const languagePatterns: Array<[RegExp, 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity']> = [
+    const languagePatterns: Array<
+      [RegExp, 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity']
+    > = [
       [/```typescript|```ts\b/i, 'typescript'],
       [/```javascript|```js\b/i, 'javascript'],
       [/```java\b/i, 'java'],
@@ -436,11 +458,11 @@ export class FirecrawlService {
     try {
       logger.info('Scraping single page', { url });
 
-      const scrapeResult = await this.firecrawl.scrape(url, {
+      const scrapeResult = (await this.firecrawl.scrape(url, {
         formats: ['markdown', 'html'],
         onlyMainContent: true,
         waitFor: 2000,
-      }) as any;
+      })) as any;
 
       // Scrape returns { markdown, metadata } directly
       if (!scrapeResult.markdown && !scrapeResult.html) {

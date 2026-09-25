@@ -13,6 +13,8 @@ import {
   SearchFilters,
   QAAnswer,
   CodeExample,
+  Chunk,
+  ProgrammingLanguage,
 } from '../types/rag.js';
 import { QA_CONFIG, SEARCH_CONFIG } from '../config/rag.js';
 import { logger } from '../utils/logger.js';
@@ -31,16 +33,16 @@ export interface RAGServiceConfig {
  * Query Intent Classification
  */
 export type QueryIntent =
-  | 'conceptual'      // "what is X", "explain Y"
-  | 'how_to'          // "how do I", "steps to"
-  | 'comparison'      // "X vs Y", "difference between"
+  | 'conceptual' // "what is X", "explain Y"
+  | 'how_to' // "how do I", "steps to"
+  | 'comparison' // "X vs Y", "difference between"
   | 'troubleshooting' // "error", "not working"
-  | 'best_practices'  // "recommended", "optimal"
-  | 'use_case'        // "suitable for", "good for"
-  | 'architecture'    // "system design", "how does X work internally"
-  | 'migration'       // "migrate from", "move to"
-  | 'security'        // "secure", "audit", "vulnerability"
-  | 'general';        // default
+  | 'best_practices' // "recommended", "optimal"
+  | 'use_case' // "suitable for", "good for"
+  | 'architecture' // "system design", "how does X work internally"
+  | 'migration' // "migrate from", "move to"
+  | 'security' // "secure", "audit", "vulnerability"
+  | 'general'; // default
 
 /**
  * Expertise Level
@@ -76,7 +78,7 @@ export class RAGService {
       topK?: number;
       filters?: SearchFilters;
       collectionName?: string;
-    } = {},
+    } = {}
   ): Promise<SearchResult[]> {
     const startTime = Date.now();
 
@@ -97,8 +99,21 @@ export class RAGService {
         collectionName: options.collectionName,
       });
 
+      // A question that names a specific proposal or standard ("HIP-904",
+      // "HCS-10") must see that document. Embeddings are weak at exact
+      // identifiers: asked what HIP-904 changes, retrieval returned HIP-655,
+      // HIP-719 and release notes, and never HIP-904 itself, although 53 of its
+      // chunks are indexed. Chunks that literally contain the identifier are
+      // fetched separately and ranked first.
+      const pinned = await this.findIdentifierMatches(query, queryEmbedding, options);
+      const seen = new Set(pinned.map((result) => result.chunk.id));
+      const merged = [...pinned, ...results.filter((result) => !seen.has(result.chunk.id))].slice(
+        0,
+        Math.max(options.topK || SEARCH_CONFIG.topK, pinned.length)
+      );
+
       // Include neighbors for context
-      const enrichedResults = await this.enrichWithNeighbors(results);
+      const enrichedResults = await this.enrichWithNeighbors(merged);
 
       const executionTime = Date.now() - startTime;
 
@@ -128,7 +143,7 @@ export class RAGService {
       filters?: SearchFilters;
       includeCodeExamples?: boolean;
       language?: string;
-    } = {},
+    } = {}
   ): Promise<QAAnswer> {
     const startTime = Date.now();
 
@@ -146,7 +161,8 @@ export class RAGService {
 
       if (searchResults.length === 0) {
         return {
-          answer: "I couldn't find any relevant information in the documentation to answer your question.",
+          answer:
+            "I couldn't find any relevant information in the documentation to answer your question.",
           sources: [],
           hasCodeExamples: false,
           model: this.completionModel,
@@ -165,13 +181,10 @@ export class RAGService {
         language: options.language,
       });
 
-      // Extract sources
-      const sources = searchResults.map(result => ({
-        title: result.chunk.metadata.title,
-        url: result.chunk.metadata.url,
-        excerpt: this.extractExcerpt(result.chunk.text, 200),
-        score: result.score,
-      }));
+      // Extract sources, keeping the best-scoring chunk per page. Several
+      // chunks of one document routinely match the same question, and without
+      // this the caller is shown the same URL two or three times over.
+      const sources = this.dedupeSources(searchResults);
 
       // Detect if answer includes code examples
       const hasCodeExamples = answer.includes('```');
@@ -208,7 +221,7 @@ export class RAGService {
     options: {
       language?: string;
       limit?: number;
-    } = {},
+    } = {}
   ): Promise<CodeExample[]> {
     try {
       logger.info('Finding code examples', {
@@ -230,19 +243,23 @@ export class RAGService {
       const codeExamples: CodeExample[] = [];
 
       for (const result of searchResults) {
-        const examples = this.extractCodeFromText(
-          result.chunk.text,
-          result.chunk.metadata.title,
-          result.chunk.metadata.url,
-          result.score,
-          options.language,
-        );
+        const examples = this.extractCodeFromText(result.chunk, result.score, options.language);
         codeExamples.push(...examples);
       }
 
       // Deduplicate and sort by score
       const uniqueExamples = this.deduplicateCodeExamples(codeExamples);
-      const sortedExamples = uniqueExamples
+
+      // Honour the requested language across the whole result set, but only
+      // when it leaves something — a request should never come back empty
+      // merely because the fences were unlabelled.
+      const requested = this.normalizeLanguage(options.language);
+      const matching = requested
+        ? uniqueExamples.filter((example) => example.language === requested)
+        : [];
+      const candidates = matching.length > 0 ? matching : uniqueExamples;
+
+      const sortedExamples = candidates
         .sort((a, b) => b.score - a.score)
         .slice(0, options.limit || 5);
 
@@ -299,7 +316,7 @@ ${chunkText}
     options: {
       includeCodeExamples?: boolean;
       language?: string;
-    } = {},
+    } = {}
   ): Promise<string> {
     try {
       // Prepare system prompt
@@ -391,48 +408,444 @@ ${chunkText}
     ];
 
     const questionLower = question.toLowerCase();
-    return codeKeywords.some(keyword => questionLower.includes(keyword));
+    return codeKeywords.some((keyword) => questionLower.includes(keyword));
   }
 
   /**
    * Extract code blocks from text
    */
-  private extractCodeFromText(
-    text: string,
-    title: string,
-    sourceUrl: string,
-    score: number,
-    preferredLanguage?: string,
-  ): CodeExample[] {
-    const codeExamples: CodeExample[] = [];
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-    let match;
+  /**
+   * Fence labels and file extensions that name a language we can label.
+   * Keys are lowercase; anything absent is left alone rather than guessed at.
+   */
+  private static readonly LANGUAGE_ALIASES: Record<string, ProgrammingLanguage> = {
+    js: 'javascript',
+    jsx: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    javascript: 'javascript',
+    node: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    typescript: 'typescript',
+    py: 'python',
+    python: 'python',
+    go: 'go',
+    golang: 'go',
+    java: 'java',
+    rs: 'rust',
+    rust: 'rust',
+    sol: 'solidity',
+    solidity: 'solidity',
+  };
 
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-      const language = (match[1] || 'javascript') as any;
-      const code = match[2].trim();
+  /** Resolve a fence label or metadata value onto a known language */
+  private normalizeLanguage(label?: string): ProgrammingLanguage | undefined {
+    if (!label) return undefined;
+    return RAGService.LANGUAGE_ALIASES[label.trim().toLowerCase()];
+  }
 
-      // Skip if code is too short
-      if (code.length < 20) {
+  /**
+   * Resolve a language from a source file URL.
+   *
+   * This is what makes raw SDK example files usable: a chunk of
+   * `.../examples/create_token/main.go` carries no markdown fence, so the
+   * extension is the only reliable signal that the chunk *is* the code.
+   */
+  private languageFromUrl(url?: string): ProgrammingLanguage | undefined {
+    if (!url) return undefined;
+    const path = url.split(/[?#]/)[0];
+    const match = path.match(/\.([a-z0-9]+)$/i);
+    return this.normalizeLanguage(match?.[1]);
+  }
+
+  /** Last path segment of a URL, for use in an explanation line */
+  private fileNameFromUrl(url?: string): string {
+    if (!url) return 'source file';
+    const path = url.split(/[?#]/)[0];
+    return path.split('/').filter(Boolean).pop() || path;
+  }
+
+  /**
+   * Build an explanation for a whole-file code chunk from its leading comments,
+   * falling back to naming the file.
+   */
+  private describeSourceChunk(chunk: Chunk, language: ProgrammingLanguage): string {
+    const fileName = this.fileNameFromUrl(chunk.metadata.url);
+
+    // Only the leading comment block. Concatenating every comment in the chunk
+    // produced run-on strings that stitched unrelated remarks together.
+    const leading: string[] = [];
+    for (const line of chunk.text.split('\n').slice(0, 15)) {
+      const isComment = /^\s*(\/\/|#|\*|\/\*)/.test(line);
+      if (!isComment) {
+        if (leading.length > 0) break;
+        continue;
+      }
+      const cleaned = line
+        .replace(/^\s*(\/\/+|#+|\*+|\/\*+)\s?/, '')
+        .replace(/\*\/\s*$/, '')
+        .trim();
+      if (cleaned) leading.push(cleaned);
+    }
+
+    const description = leading.join(' ').slice(0, 200).trim();
+
+    return description ? `${fileName}: ${description}` : `${language} example from ${fileName}`;
+  }
+
+  /**
+   * Split chunk text into fenced code blocks.
+   *
+   * Parsed line by line rather than with a paired-backtick regex, because the
+   * indexed markdown breaks every assumption that regex made:
+   *   - info strings carry a label after the language (```java Java)
+   *   - blocks nest inside four-backtick fences (````)
+   *   - chunk overlap can slice mid-block, leaving a stray closing fence with
+   *     no opener at the top of a chunk
+   *
+   * The paired-regex version silently matched from a stray closing fence to the
+   * next opening one, returning prose as "code".
+   */
+  private extractFencedBlocks(
+    text: string
+  ): Array<{ language?: string; code: string; offset: number }> {
+    const lines = text.split('\n');
+    const blocks: Array<{ language?: string; code: string; offset: number }> = [];
+
+    interface OpenFence {
+      char: string;
+      length: number;
+      language?: string;
+      body: string[];
+      offset: number;
+    }
+
+    let open: OpenFence | null = null;
+    let offset = 0;
+
+    for (const line of lines) {
+      const lineOffset = offset;
+      offset += line.length + 1;
+
+      const fence = line.match(/^[ \t]{0,3}(`{3,}|~{3,})[ \t]*(\S*)/);
+      if (!fence) {
+        if (open) open.body.push(line);
         continue;
       }
 
-      // Extract context (text before code block)
-      const textBeforeCode = text.substring(0, match.index);
-      const contextLines = textBeforeCode.split('\n').slice(-3);
-      const explanation = contextLines.join('\n').trim();
+      const marker = fence[1];
+      const info = fence[2] || undefined;
+      const started: OpenFence = {
+        char: marker[0],
+        length: marker.length,
+        language: info,
+        body: [],
+        offset: lineOffset,
+      };
 
-      codeExamples.push({
-        title,
-        code,
-        language,
-        sourceUrl,
-        explanation,
-        score: preferredLanguage && language === preferredLanguage ? score * 1.2 : score,
+      if (open === null) {
+        open = started;
+        continue;
+      }
+
+      if (info && !open.language) {
+        // The pending block was opened by a bare fence and we have now hit a
+        // labelled one: the bare fence was the tail of a block split across
+        // chunks, not an opener. Drop it and start here instead.
+        open = started;
+        continue;
+      }
+
+      if (marker[0] === open.char && marker.length >= open.length && !info) {
+        blocks.push({
+          language: open.language,
+          code: open.body.join('\n').trim(),
+          offset: open.offset,
+        });
+        open = null;
+        continue;
+      }
+
+      // A shorter or differently-marked fence belongs to the block's contents
+      open.body.push(line);
+    }
+
+    // A block that opened with a real language but never closed was split by
+    // the chunker; its contents are still code. A bare unterminated fence is
+    // assumed to be a stray closer and dropped.
+    if (open !== null && open.language) {
+      blocks.push({
+        language: open.language,
+        code: open.body.join('\n').trim(),
+        offset: open.offset,
       });
     }
 
+    return blocks;
+  }
+
+  /**
+   * Does this line read as prose rather than code?
+   *
+   * Used to keep code out of the `explanation` field. Deliberately strict: the
+   * cost of dropping a usable sentence is an empty explanation, while the cost
+   * of keeping a line of code is an example that appears to be described by
+   * source in another language.
+   */
+  private looksLikeProse(line: string): boolean {
+    const trimmed = line.trim();
+
+    if (trimmed.length < 15) return false;
+    if (/^[ \t]{0,3}(`{3,}|~{3,})/.test(trimmed)) return false; // fence
+    if (/^[#/]{1,3}\s*\[/.test(trimmed)) return false; // #[derive(...)] attribute macros
+
+    // Headings and list items are prose once their marker is removed
+    if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/.test(trimmed)) {
+      const withoutMarker = trimmed.replace(/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/, '').trim();
+      return (
+        withoutMarker.length >= 15 &&
+        withoutMarker.split(/\s+/).length >= 4 &&
+        !/[;{}]\s*$/.test(withoutMarker)
+      );
+    }
+
+    if (
+      /^(import|package|use|from|const|let|var|func|fn|def|class|public|private|return|await|async|if|for|while|try|catch|@)\b/.test(
+        trimmed
+      )
+    ) {
+      return false;
+    }
+    if (/[;{}]\s*$/.test(trimmed)) return false; // statement or block punctuation
+    if (/^[.)\]}]/.test(trimmed)) return false; // continuation of a chained call
+    if (
+      /\w+\(|=>|::/.test(trimmed) &&
+      !/\s(the|a|an|to|of|for|with|that|this|is|are)\s/i.test(trimmed)
+    ) {
+      return false;
+    }
+
+    // Real prose has spaces between words and at least a few of them
+    return trimmed.split(/\s+/).length >= 4;
+  }
+
+  /** The last few lines of prose in a passage, or an empty string if none */
+  private nearestProse(passage: string, maxLines = 3): string {
+    const prose: string[] = [];
+
+    for (const line of passage.split('\n').reverse()) {
+      if (this.looksLikeProse(line)) {
+        prose.unshift(line.trim());
+        if (prose.length === maxLines) break;
+      } else if (prose.length > 0) {
+        // Stop at the first non-prose line above what we collected
+        break;
+      }
+    }
+
+    return prose.join(' ').trim();
+  }
+
+  /**
+   * Extract runnable code examples from one retrieved chunk.
+   *
+   * Two shapes of indexed content carry code, and both have to work:
+   *
+   *   1. Prose documentation (docs.hedera.com, HIPs, tutorials), where code
+   *      lives in ```-fenced blocks inside markdown.
+   *   2. Raw SDK example files (`.go`, `.java`, `.py`, `.rs`, `.ts`) indexed
+   *      straight from the SDK repositories, where the chunk *is* the code and
+   *      no fence exists.
+   *
+   * Only handling (1) made `docs_get_example` return nothing for every language
+   * whose examples are source files rather than prose.
+   */
+  private extractCodeFromText(
+    chunk: Chunk,
+    score: number,
+    preferredLanguage?: string
+  ): CodeExample[] {
+    const { text } = chunk;
+    const title = chunk.metadata.title;
+    const sourceUrl = chunk.metadata.url;
+    const preferred = this.normalizeLanguage(preferredLanguage);
+    const chunkLanguage = this.normalizeLanguage(chunk.metadata.language);
+
+    const codeExamples: CodeExample[] = [];
+
+    for (const block of this.extractFencedBlocks(text)) {
+      // Skip if code is too short
+      if (block.code.length < 20) {
+        continue;
+      }
+
+      // Prefer the fence's own label, keep an unrecognised one verbatim rather
+      // than silently relabelling it (a ```bash block is not JavaScript).
+      const language = (this.normalizeLanguage(block.language) ||
+        (block.language as ProgrammingLanguage | undefined) ||
+        chunkLanguage ||
+        'javascript') as ProgrammingLanguage;
+
+      // Context for the block: the nearest lines of real prose before it.
+      // Taking N raw lines produced "explanations" that were fence markers,
+      // Rust attribute macros, or Java source sitting above a Go block on a
+      // multi-language page. Anything that does not read as prose is dropped,
+      // and no explanation is better than a misleading one.
+      const explanation = this.nearestProse(text.substring(0, block.offset));
+
+      codeExamples.push({
+        title,
+        code: block.code,
+        language,
+        sourceUrl,
+        explanation,
+        score: preferred && language === preferred ? score * 1.2 : score,
+      });
+    }
+
+    if (codeExamples.length === 0) {
+      // No fence: treat the chunk as code only when the URL is itself a source
+      // file. The chunk's `language` metadata is not enough — a multi-language
+      // tutorial page carries one too, and dumping its prose out as "code"
+      // would be worse than returning nothing.
+      const language = this.languageFromUrl(sourceUrl);
+      const code = text.trim();
+
+      if (language && chunk.metadata.hasCode && code.length >= 20) {
+        codeExamples.push({
+          title,
+          code,
+          language,
+          sourceUrl,
+          explanation: this.describeSourceChunk(chunk, language),
+          score: preferred && language === preferred ? score * 1.2 : score,
+        });
+      }
+    }
+
     return codeExamples;
+  }
+
+  /**
+   * Proposal and standard identifiers named in a query, normalised to the form
+   * the documents use ("hip 904" -> "HIP-904").
+   */
+  static extractSpecIdentifiers(query: string): string[] {
+    const found = new Set<string>();
+    const pattern = /\b(HIP|HCS)[\s-]?(\d{1,4})\b/gi;
+    let match;
+    while ((match = pattern.exec(query)) !== null) {
+      found.add(`${match[1].toUpperCase()}-${Number(match[2])}`);
+    }
+    return Array.from(found).slice(0, 3);
+  }
+
+  /**
+   * Chunks for each proposal or standard the query names.
+   *
+   * Two lookups per identifier. First the document that *defines* it, and the
+   * chunks of that document closest to the question: a HIP never names itself in
+   * its body — its only literal marker is the `hip: 904` frontmatter line in the
+   * first chunk, which holds nothing but the author list — so matching the text
+   * "HIP-904" can never find it. Then up to two other documents that mention the
+   * identifier by name, such as release notes. Matching is on the whole
+   * identifier, so HCS-1 does not pull in HCS-10.
+   */
+  private async findIdentifierMatches(
+    query: string,
+    queryEmbedding: number[],
+    options: { filters?: SearchFilters; collectionName?: string }
+  ): Promise<SearchResult[]> {
+    const pinned: SearchResult[] = [];
+    const seen = new Set<string>();
+    const add = (results: SearchResult[], limit: number) => {
+      for (const result of results) {
+        if (limit <= 0) break;
+        if (seen.has(result.chunk.id)) continue;
+        seen.add(result.chunk.id);
+        pinned.push(result);
+        limit--;
+      }
+    };
+
+    for (const identifier of RAGService.extractSpecIdentifiers(query)) {
+      const [kind, number] = identifier.split('-');
+
+      try {
+        // 1. The defining document
+        const probe = kind === 'HIP' ? `hip: ${number}` : identifier;
+        const defines =
+          kind === 'HIP'
+            ? (hit: SearchResult) =>
+                new RegExp(`(^|\\n)hip:\\s*${number}\\s*(\\n|$)`).test(hit.chunk.text)
+            : (hit: SearchResult) =>
+                new RegExp(`/hcs-${number}(\\.md|/)`, 'i').test(hit.chunk.metadata.url);
+
+        const probeHits = await this.chromaService.query(queryEmbedding, {
+          nResults: 10,
+          collectionName: options.collectionName,
+          documentContains: probe,
+        });
+        const documentId = probeHits.find(defines)?.chunk.documentId;
+
+        if (documentId) {
+          const inDocument = await this.chromaService.query(queryEmbedding, {
+            nResults: 3,
+            collectionName: options.collectionName,
+            filters: { ...options.filters, documentId },
+          });
+          add(inDocument, 3);
+        }
+
+        // 2. Other documents that name it
+        const mentions = await this.chromaService.query(queryEmbedding, {
+          nResults: 10,
+          filters: options.filters,
+          collectionName: options.collectionName,
+          documentContains: identifier,
+        });
+        const exact = new RegExp(`\\b${identifier}(?!\\d)`, 'i');
+        add(
+          mentions.filter(
+            (hit) => exact.test(hit.chunk.text) && hit.chunk.documentId !== documentId
+          ),
+          2
+        );
+      } catch (error: any) {
+        // Identifier lookup is an enhancement; plain retrieval still answers
+        logger.warn('Identifier lookup failed', { identifier, error: error.message });
+      }
+    }
+
+    return pinned;
+  }
+
+  /**
+   * Collapse search results into one source entry per URL, keeping the highest
+   * scoring chunk for each.
+   */
+  private dedupeSources(
+    searchResults: SearchResult[]
+  ): Array<{ title: string; url: string; excerpt: string; score: number }> {
+    const best = new Map<string, SearchResult>();
+
+    for (const result of searchResults) {
+      const url = result.chunk.metadata.url;
+      const current = best.get(url);
+      if (!current || result.score > current.score) {
+        best.set(url, result);
+      }
+    }
+
+    return Array.from(best.values())
+      .sort((a, b) => b.score - a.score)
+      .map((result) => ({
+        title: result.chunk.metadata.title,
+        url: result.chunk.metadata.url,
+        excerpt: this.extractExcerpt(result.chunk.text, 200),
+        score: result.score,
+      }));
   }
 
   /**
@@ -632,9 +1045,7 @@ ${chunkText}
 
     // Add relevant terms that aren't already in the query
     const queryLower = query.toLowerCase();
-    const additionalTerms = relatedTerms
-      .filter(term => !queryLower.includes(term))
-      .slice(0, 2);
+    const additionalTerms = relatedTerms.filter((term) => !queryLower.includes(term)).slice(0, 2);
 
     if (additionalTerms.length > 0) {
       return `${query} ${additionalTerms.join(' ')}`;
@@ -646,26 +1057,41 @@ ${chunkText}
   /**
    * Get system prompt tailored to query intent
    */
-  getIntentBasedSystemPrompt(intent: QueryIntent, expertiseLevel: ExpertiseLevel = 'intermediate'): string {
+  getIntentBasedSystemPrompt(
+    intent: QueryIntent,
+    expertiseLevel: ExpertiseLevel = 'intermediate'
+  ): string {
     const basePrompt = QA_CONFIG.systemPrompt;
 
     const intentInstructions: Record<QueryIntent, string> = {
-      conceptual: 'Focus on clear explanations and definitions. Provide background context and fundamental concepts.',
-      how_to: 'Provide step-by-step instructions with practical examples. Be specific about implementation details.',
-      comparison: 'Objectively compare the options, highlighting pros and cons of each. Include specific use cases for each option.',
-      troubleshooting: 'Focus on diagnosing the issue and providing actionable solutions. Include common causes and debugging steps.',
-      best_practices: 'Emphasize industry best practices, patterns, and recommendations. Explain the reasoning behind each practice.',
-      use_case: 'Analyze suitability for the specific use case. Consider requirements, constraints, and alternatives.',
-      architecture: 'Explain the system design, components, and how they interact. Use diagrams if helpful.',
-      migration: 'Provide migration strategies, potential challenges, and step-by-step transition guides.',
-      security: 'Focus on security implications, potential vulnerabilities, and protective measures. Be thorough about risks.',
+      conceptual:
+        'Focus on clear explanations and definitions. Provide background context and fundamental concepts.',
+      how_to:
+        'Provide step-by-step instructions with practical examples. Be specific about implementation details.',
+      comparison:
+        'Objectively compare the options, highlighting pros and cons of each. Include specific use cases for each option.',
+      troubleshooting:
+        'Focus on diagnosing the issue and providing actionable solutions. Include common causes and debugging steps.',
+      best_practices:
+        'Emphasize industry best practices, patterns, and recommendations. Explain the reasoning behind each practice.',
+      use_case:
+        'Analyze suitability for the specific use case. Consider requirements, constraints, and alternatives.',
+      architecture:
+        'Explain the system design, components, and how they interact. Use diagrams if helpful.',
+      migration:
+        'Provide migration strategies, potential challenges, and step-by-step transition guides.',
+      security:
+        'Focus on security implications, potential vulnerabilities, and protective measures. Be thorough about risks.',
       general: 'Provide a comprehensive and balanced answer covering all relevant aspects.',
     };
 
     const levelInstructions: Record<ExpertiseLevel, string> = {
-      beginner: 'Use simple language and avoid jargon. Explain technical terms when used. Provide more context and examples.',
-      intermediate: 'Assume familiarity with blockchain basics. Balance explanation with technical details.',
-      advanced: 'Use technical terminology freely. Focus on advanced patterns, optimizations, and edge cases.',
+      beginner:
+        'Use simple language and avoid jargon. Explain technical terms when used. Provide more context and examples.',
+      intermediate:
+        'Assume familiarity with blockchain basics. Balance explanation with technical details.',
+      advanced:
+        'Use technical terminology freely. Focus on advanced patterns, optimizations, and edge cases.',
     };
 
     return `${basePrompt}
@@ -689,7 +1115,7 @@ ${levelInstructions[expertiseLevel]}`;
       language?: string;
       queryIntent?: QueryIntent;
       expertiseLevel?: ExpertiseLevel;
-    } = {},
+    } = {}
   ): Promise<QAAnswer> {
     const startTime = Date.now();
 
@@ -715,7 +1141,8 @@ ${levelInstructions[expertiseLevel]}`;
 
       if (searchResults.length === 0) {
         return {
-          answer: "I couldn't find any relevant information in the Hedera documentation to answer your question. Try rephrasing your question or breaking it down into more specific parts.",
+          answer:
+            "I couldn't find any relevant information in the Hedera documentation to answer your question. Try rephrasing your question or breaking it down into more specific parts.",
           sources: [],
           hasCodeExamples: false,
           model: this.completionModel,
@@ -726,8 +1153,9 @@ ${levelInstructions[expertiseLevel]}`;
       const context = this.buildContext(searchResults);
 
       // Check if question is asking for code examples
-      const wantsCodeExample = this.detectCodeExampleRequest(question) ||
-                               (intent === 'how_to' && options.includeCodeExamples !== false);
+      const wantsCodeExample =
+        this.detectCodeExampleRequest(question) ||
+        (intent === 'how_to' && options.includeCodeExamples !== false);
 
       // Generate intent-aware system prompt
       const systemPrompt = this.getIntentBasedSystemPrompt(intent, expertiseLevel);
@@ -738,13 +1166,10 @@ ${levelInstructions[expertiseLevel]}`;
         language: options.language,
       });
 
-      // Extract sources
-      const sources = searchResults.map(result => ({
-        title: result.chunk.metadata.title,
-        url: result.chunk.metadata.url,
-        excerpt: this.extractExcerpt(result.chunk.text, 200),
-        score: result.score,
-      }));
+      // Extract sources, keeping the best-scoring chunk per page. Several
+      // chunks of one document routinely match the same question, and without
+      // this the caller is shown the same URL two or three times over.
+      const sources = this.dedupeSources(searchResults);
 
       // Detect if answer includes code examples
       const hasCodeExamples = answer.includes('```');
@@ -785,7 +1210,7 @@ ${levelInstructions[expertiseLevel]}`;
     options: {
       includeCodeExamples?: boolean;
       language?: string;
-    } = {},
+    } = {}
   ): Promise<string> {
     try {
       let finalSystemPrompt = systemPrompt;

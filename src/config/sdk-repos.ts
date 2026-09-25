@@ -2,6 +2,7 @@
  * SDK Repository Configuration
  *
  * Configuration for Hedera SDK GitHub repositories to index.
+ * The SDKs moved to the hiero-ledger organisation in 2025; the old hashgraph/* names redirect.
  * Each SDK has specific files and examples to fetch for RAG indexing.
  */
 
@@ -31,8 +32,8 @@ export interface SDKRepoConfig {
  */
 export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
   javascript: {
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-js',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-js',
     branch: 'main',
     displayName: 'JavaScript/TypeScript SDK',
     docFiles: [
@@ -41,6 +42,8 @@ export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
       'CONTRIBUTING.md',
       'manual/CONFIGURATION.md',
       'manual/MIGRATING_V1.md',
+      'manual/migration_hiero.md',
+      'manual/SOLO_QUICK_REFERENCE.md',
     ],
     examplesDir: 'examples',
     examplePatterns: ['*.js', '*.mjs', '*.ts'],
@@ -48,18 +51,18 @@ export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
   },
 
   java: {
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-java',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-java',
     branch: 'main',
     displayName: 'Java SDK',
     docFiles: [
       'README.md',
       'CHANGELOG.md',
-      'CONTRIBUTING.md',
-      'HIERO_MIGRATION.md',
-      'docs/java-app-quickstart.md',
-      'docs/android-app-quickstart.md',
-      'docs/developer-guide.md',
+      'docs/sdk/developer-guide.md',
+      'docs/sdk/SDK_ANATOMY.md',
+      'docs/sdk/MIGRATING_V1.md',
+      'docs/java-app/java-app-quickstart.md',
+      'docs/android-app/android-app-quickstart.md',
     ],
     examplesDir: 'examples/src/main/java/com/hedera/hashgraph/sdk/examples',
     examplePatterns: ['*.java'],
@@ -67,16 +70,11 @@ export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
   },
 
   go: {
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-go',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-go',
     branch: 'main',
     displayName: 'Go SDK',
-    docFiles: [
-      'README.md',
-      'CHANGELOG.md',
-      'CONTRIBUTING.md',
-      'MIGRATING_V1.md',
-    ],
+    docFiles: ['README.md', 'CHANGELOG.md', 'MIGRATING_V1.md', 'TESTING.md'],
     examplesDir: 'examples',
     examplePatterns: ['*.go'],
     excludeDirs: ['vendor'],
@@ -89,7 +87,6 @@ export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
     displayName: 'Python SDK',
     docFiles: [
       'README.md',
-      'CHANGELOG.md',
       'CONTRIBUTING.md',
       'docs/sdk_users/running_examples.md',
       'docs/sdk_developers/setup.md',
@@ -101,16 +98,11 @@ export const SDK_REPOS: Record<SDKLanguage, SDKRepoConfig> = {
   },
 
   rust: {
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-rust',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-rust',
     branch: 'main',
     displayName: 'Rust SDK',
-    docFiles: [
-      'README.md',
-      'CHANGELOG.md',
-      'CONTRIBUTING.md',
-      'MIGRATION.md',
-    ],
+    docFiles: ['README.md', 'MIGRATION.md', 'SOLO_DEV_REFERENCE.md'],
     examplesDir: 'examples',
     examplePatterns: ['*.rs'],
     excludeDirs: ['target'],

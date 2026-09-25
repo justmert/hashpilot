@@ -95,7 +95,7 @@ export class EmbeddingService {
       batchSize?: number;
       useCache?: boolean;
       onProgress?: (current: number, total: number) => void;
-    } = {},
+    } = {}
   ): Promise<number[][]> {
     const batchSize = options.batchSize || INDEXING_CONFIG.embeddingBatchSize;
     const useCache = options.useCache !== false;
@@ -366,6 +366,6 @@ export class EmbeddingService {
    * Sleep utility
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

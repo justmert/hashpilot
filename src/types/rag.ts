@@ -7,12 +7,14 @@
 /**
  * Document content types
  */
-export type DocumentContentType = 'tutorial' | 'api' | 'concept' | 'example' | 'guide' | 'reference';
+export type DocumentContentType =
+  'tutorial' | 'api' | 'concept' | 'example' | 'guide' | 'reference';
 
 /**
  * Programming languages for code examples
  */
-export type ProgrammingLanguage = 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity' | 'rust';
+export type ProgrammingLanguage =
+  'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity' | 'rust';
 
 /**
  * Document metadata
@@ -156,6 +158,8 @@ export interface SearchFilters {
   hasCode?: boolean;
   /** Filter by URL pattern (e.g., "/tutorials/") */
   urlPattern?: string;
+  /** Restrict to the chunks of one document */
+  documentId?: string;
   /** Minimum similarity score */
   minScore?: number;
 }

@@ -39,11 +39,7 @@ export class TokenCounter {
   /**
    * Split text into chunks by token count
    */
-  splitByTokens(
-    text: string,
-    maxTokens: number,
-    overlapTokens: number = 0,
-  ): string[] {
+  splitByTokens(text: string, maxTokens: number, overlapTokens: number = 0): string[] {
     try {
       const tokens = this.encoder.encode(text);
 
@@ -102,11 +98,7 @@ export class TokenCounter {
   /**
    * Split text while respecting semantic boundaries (paragraphs, sentences)
    */
-  splitBySemantic(
-    text: string,
-    maxTokens: number,
-    overlapTokens: number = 0,
-  ): string[] {
+  splitBySemantic(text: string, maxTokens: number, overlapTokens: number = 0): string[] {
     try {
       // Split by paragraphs first
       const paragraphs = text.split(/\n\n+/);

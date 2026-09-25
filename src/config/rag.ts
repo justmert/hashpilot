@@ -129,56 +129,56 @@ export const FIRECRAWL_CONFIG = {
   baseUrls: [
     'https://docs.hedera.com',
     // SDK repositories - docs and examples only
-    'https://github.com/hashgraph/hedera-sdk-js',
-    'https://github.com/hashgraph/hedera-sdk-java',
-    'https://github.com/hashgraph/hedera-sdk-go',
-    'https://github.com/hashgraph/hedera-sdk-rust',
+    'https://github.com/hiero-ledger/hiero-sdk-js',
+    'https://github.com/hiero-ledger/hiero-sdk-java',
+    'https://github.com/hiero-ledger/hiero-sdk-go',
+    'https://github.com/hiero-ledger/hiero-sdk-rust',
     'https://github.com/hiero-ledger/hiero-sdk-python',
   ],
   /** URL patterns to exclude (for all sources) */
   excludePatterns: [
     // Hedera docs exclusions
-    '/api/v1/',  // Skip API versioning pages
-    '/search',   // Skip search pages
-    '/404',      // Skip error pages
-    'sitemap',   // Skip sitemaps
-    '/rss',      // Skip RSS feeds
-    '.xml',      // Skip XML files
+    '/api/v1/', // Skip API versioning pages
+    '/search', // Skip search pages
+    '/404', // Skip error pages
+    'sitemap', // Skip sitemaps
+    '/rss', // Skip RSS feeds
+    '.xml', // Skip XML files
     // REST API specs now INCLUDED for comprehensive coverage
     // GitHub SDK exclusions - skip source code, tests, build artifacts
-    '/tree/main/src/',      // Source code directories
-    '/blob/main/src/',      // Source code files
-    '/tree/main/test',      // Test directories
-    '/tree/main/tests',     // Test directories
-    '/blob/main/test',      // Test files
-    '/__tests__/',          // Jest tests
-    '.test.js',             // Test files
-    '.test.ts',             // Test files
-    '.spec.js',             // Spec files
-    '.spec.ts',             // Spec files
-    '_test.go',             // Go test files
-    '_test.rs',             // Rust test files
-    '/node_modules/',       // Node dependencies
-    '/build/',              // Build output
-    '/dist/',               // Distribution
-    '/target/',             // Rust/Java build
-    '/.github/',            // GitHub workflows
-    '/gradle/',             // Gradle files
-    '/proto/',              // Protobuf files
-    '/protobufs/',          // Protobuf files
-    '.gradle',              // Gradle files
-    '.lock',                // Lock files
-    'package-lock.json',    // NPM lock
-    'yarn.lock',            // Yarn lock
-    'pnpm-lock.yaml',       // PNPM lock
-    'Cargo.lock',           // Cargo lock
-    'go.sum',               // Go sum
-    '/pulls',               // Pull requests
-    '/issues',              // Issues
-    '/actions',             // GitHub actions
-    '/commits',             // Commit history
-    '/branches',            // Branch list
-    '/tags',                // Tag list
+    '/tree/main/src/', // Source code directories
+    '/blob/main/src/', // Source code files
+    '/tree/main/test', // Test directories
+    '/tree/main/tests', // Test directories
+    '/blob/main/test', // Test files
+    '/__tests__/', // Jest tests
+    '.test.js', // Test files
+    '.test.ts', // Test files
+    '.spec.js', // Spec files
+    '.spec.ts', // Spec files
+    '_test.go', // Go test files
+    '_test.rs', // Rust test files
+    '/node_modules/', // Node dependencies
+    '/build/', // Build output
+    '/dist/', // Distribution
+    '/target/', // Rust/Java build
+    '/.github/', // GitHub workflows
+    '/gradle/', // Gradle files
+    '/proto/', // Protobuf files
+    '/protobufs/', // Protobuf files
+    '.gradle', // Gradle files
+    '.lock', // Lock files
+    'package-lock.json', // NPM lock
+    'yarn.lock', // Yarn lock
+    'pnpm-lock.yaml', // PNPM lock
+    'Cargo.lock', // Cargo lock
+    'go.sum', // Go sum
+    '/pulls', // Pull requests
+    '/issues', // Issues
+    '/actions', // GitHub actions
+    '/commits', // Commit history
+    '/branches', // Branch list
+    '/tags', // Tag list
   ],
   /** URL patterns to include (for GitHub repos) - prioritize docs and examples */
   includePatterns: [
@@ -213,15 +213,30 @@ export const QA_CONFIG = {
   systemPrompt: `You are a helpful assistant specialized in Hedera Hashgraph technology.
 Your role is to answer questions about Hedera based on the provided documentation context.
 
-Guidelines:
-1. Always base your answers on the provided context
-2. If the context doesn't contain enough information, say so clearly
-3. Provide code examples when relevant
-4. Cite sources by mentioning the documentation section
-5. Be concise but comprehensive
-6. Use technical terminology accurately
-7. If asked about multiple topics, structure your answer clearly
-8. If the question is unclear, ask for clarification`,
+Grounding rules (these override helpfulness — a wrong API is worse than no answer):
+1. Every class, method, constant, package and configuration name you write MUST
+   appear verbatim in the provided context. Never infer an identifier from the
+   shape of a question or from what a name "should" be.
+2. If the context does not show the exact API needed, say plainly which part you
+   cannot answer and point to the closest source, rather than filling the gap
+   with a plausible-looking name or signature.
+3. Do not mix ecosystems: never put a Python package name in an npm command, or
+   a JavaScript API in Java/Go/Rust/Python code.
+4. Never answer questions about live or future values — token prices, market
+   data, balances, network status at this moment. The context is a snapshot of
+   documentation, not a live feed. Note in particular that Hedera's exchange
+   rate endpoints publish the protocol's fee-conversion rate, NOT the market
+   price of HBAR, and its "next" rate is the next fee period, not a forecast.
+5. State uncertainty where it exists. "The documentation does not cover this"
+   is a correct and useful answer; a confident invented one is not.
+
+Answering:
+6. Provide code examples when relevant, taken from the context
+7. Cite sources by mentioning the documentation section
+8. Be concise but comprehensive
+9. Use technical terminology accurately
+10. If asked about multiple topics, structure your answer clearly
+11. If the question is unclear, ask for clarification`,
 
   /** User prompt template */
   userPromptTemplate: `Context from Hedera documentation:
@@ -270,10 +285,15 @@ export const CACHE_CONFIG = {
 } as const;
 
 /**
- * Hosted ChromaDB URL - pre-indexed with Hedera documentation
- * Users don't need to configure this - it's provided by HashPilot
+ * Hosted ChromaDB - pre-indexed with Hedera documentation.
+ *
+ * Users do not need to configure this. The host is a token gateway
+ * (docker/railway/gateway) in front of ChromaDB: the read token below only
+ * permits queries, so shipping it with the package is safe. Indexing uses a
+ * separate admin token that is never published.
  */
-export const HOSTED_CHROMA_URL = 'https://chroma.hash-pilot.app';
+export const HOSTED_CHROMA_URL = 'https://chroma-gateway-production.up.railway.app';
+export const HOSTED_CHROMA_READ_TOKEN = 'hp_read_f45c816fad4eba5d4bb6dd364a97aa08';
 
 /**
  * Create RAG configuration from environment variables
@@ -284,9 +304,12 @@ export const HOSTED_CHROMA_URL = 'https://chroma.hash-pilot.app';
  * - FIRECRAWL_URL/FIRECRAWL_API_KEY: Optional, only for admin indexing
  */
 export function createRAGConfig(): RAGConfig {
-  // ChromaDB - default to hosted instance, allow override for local dev
-  const chromaUrl = process.env.CHROMA_URL || HOSTED_CHROMA_URL;
-  const chromaAuthToken = process.env.CHROMA_AUTH_TOKEN;
+  // ChromaDB - default to hosted instance, allow override for self-hosting.
+  // The read token applies only when talking to the hosted gateway.
+  const chromaUrl = (process.env.CHROMA_URL || HOSTED_CHROMA_URL).replace(/\/+$/, '');
+  const chromaAuthToken =
+    process.env.CHROMA_AUTH_TOKEN ||
+    (chromaUrl === HOSTED_CHROMA_URL ? HOSTED_CHROMA_READ_TOKEN : undefined);
 
   // OpenAI API key - MUST be provided by user in their MCP config
   // This is read from the "env" section of the user's .mcp.json
@@ -305,7 +328,10 @@ export function createRAGConfig(): RAGConfig {
     embeddingModel: OPENAI_CONFIG.embeddingModel,
     completionModel: OPENAI_CONFIG.completionModel,
     chunkSize: parseInt(process.env.RAG_CHUNK_SIZE || String(CHUNKING_CONFIG.targetChunkSize), 10),
-    chunkOverlap: parseInt(process.env.RAG_CHUNK_OVERLAP || String(CHUNKING_CONFIG.overlapSize), 10),
+    chunkOverlap: parseInt(
+      process.env.RAG_CHUNK_OVERLAP || String(CHUNKING_CONFIG.overlapSize),
+      10
+    ),
     topK: parseInt(process.env.RAG_TOP_K || String(SEARCH_CONFIG.topK), 10),
     minScore: parseFloat(process.env.RAG_MIN_SCORE || String(SEARCH_CONFIG.minScore)),
     collections: CHROMA_COLLECTIONS,
