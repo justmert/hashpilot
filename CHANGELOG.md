@@ -4,7 +4,7 @@ All notable changes to HashPilot are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.2.1] - Unreleased
+## [0.2.1] - 2026-09-25
 
 The first maintenance release since 0.1.0. In the eleven months after that
 release the Hedera network and several services HashPilot depends on changed
