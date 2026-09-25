@@ -46,20 +46,23 @@ npx hashpilot
 
 ### INVALID_SIGNATURE or KEY_PREFIX_MISMATCH
 
-**Cause:** Private key format is incorrect
+**Cause:** The key does not belong to the account, or a raw hex key was read as the wrong curve.
 
-**Solutions:**
+HashPilot accepts both formats:
 
-1. Ensure key is in hex format (not DER encoded)
-2. Remove any prefixes like "302e020100..."
-3. Use the raw 64-character hex key
+- **DER-encoded hex** (starts with `302e...` or `3030...`): the curve is encoded in the key, nothing else to configure.
+- **Raw 64-character hex** (with or without `0x`): the bytes do not say which curve they belong to. HashPilot assumes ECDSA, which is what the Hedera Portal issues by default. For an ED25519 account, set `HEDERA_OPERATOR_KEY_TYPE=ed25519`.
+
+On startup HashPilot fetches the operator account from the Mirror Node and compares the derived public key. If they differ it tries the other curve, and if that also fails it refuses to start with a message naming both keys, so a mismatch shows up immediately instead of as `INVALID_SIGNATURE` later.
 
 ```json
-// Correct - raw hex
-"HEDERA_OPERATOR_KEY": "abc123def456..."
+// Either of these works
+"HEDERA_OPERATOR_KEY": "302e020100300506032b657004220420abc123..."   // DER
+"HEDERA_OPERATOR_KEY": "abc123def456..."                                // raw hex, ECDSA assumed
 
-// Wrong - DER encoded
-"HEDERA_OPERATOR_KEY": "302e020100300506032b657004220420abc123..."
+// Raw hex for an ED25519 account
+"HEDERA_OPERATOR_KEY": "abc123def456...",
+"HEDERA_OPERATOR_KEY_TYPE": "ed25519"
 ```
 
 ### INSUFFICIENT_PAYER_BALANCE
@@ -95,8 +98,9 @@ npx hashpilot
 **Solutions:**
 
 1. Try broader search terms
-2. Check if the hosted ChromaDB is accessible
+2. Ask for `health_check` with `verbose: true`; the `services.chromadb` entry shows the index URL and whether its heartbeat succeeded
 3. Verify OpenAI API key is valid
+4. If you set `CHROMA_URL`, check that your own server is running and indexed (see [Self-hosting](/self-hosting))
 
 ---
 
@@ -145,6 +149,27 @@ npx hashpilot
 1. Increase gas limit manually
 2. Check if function exists in ABI
 3. Verify contract is deployed on target network
+
+### Verification fails or previewnet cannot be verified
+
+**Cause:** HashScan reads verification from Sourcify, which supports mainnet (chain 295) and testnet (chain 296) only. Verification also fails when the source or compiler settings differ from what produced the deployed bytecode.
+
+**Solutions:**
+
+1. Verify on testnet or mainnet; previewnet contracts cannot be verified
+2. Pass the exact source file and contract name to `verify_contract`
+3. For Hardhat projects ask for `hardhat_contract verify`; it locates the build-info file and lists the `npx hardhat verify` and [verify.sourcify.dev](https://verify.sourcify.dev/) alternatives
+4. For Foundry run `forge verify-contract --verifier sourcify --chain 296 <address> src/Contract.sol:Contract`
+
+### "forge: command not found" or Hardhat errors on init
+
+**Cause:** The Foundry tools shell out to `forge`, `cast` and `anvil`; the Hardhat tools run `npm install` in the project.
+
+**Solutions:**
+
+1. Install Foundry with `foundryup` (HashPilot also looks in `~/.foundry/bin`)
+2. Check that `npm` is on the `PATH` of the process that launched your editor
+3. Pass an absolute `directory` for every project operation
 
 ---
 
@@ -195,17 +220,19 @@ Or update config:
 
 If you're still stuck:
 
-1. **Use error_explain tool:**
+1. **Read the [Best Practices](/best-practices)** for keys, networks, providers and costs
+
+2. **Use error_explain tool:**
 
    ```
    "Explain error INSUFFICIENT_PAYER_BALANCE"
    ```
 
-2. **Check GitHub Issues:**
+3. **Check GitHub Issues:**
    [github.com/justmert/hashpilot/issues](https://github.com/justmert/hashpilot/issues)
 
-3. **Hedera Discord:**
+4. **Hedera Discord:**
    [hedera.com/discord](https://hedera.com/discord)
 
-4. **Hedera Documentation:**
+5. **Hedera Documentation:**
    [docs.hedera.com](https://docs.hedera.com)

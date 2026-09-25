@@ -3,7 +3,14 @@ title: Installation
 description: Install and configure HashPilot with your AI editor
 ---
 
-This guide covers installing HashPilot and configuring it with your preferred AI editor.
+This guide covers installing HashPilot and configuring it with your preferred AI editor or CLI.
+
+## Requirements
+
+- **Node.js** 20 or newer (`node --version`)
+- **A Hedera account** on the network you want to use. Testnet accounts are free at [portal.hedera.com](https://portal.hedera.com)
+- **An OpenAI API key**, only if you want the documentation and code generation tools (`docs_search`, `docs_ask`, `docs_get_example`, `code_generate`)
+- **Foundry and/or Hardhat** on your machine, only for the smart contract tools
 
 ## Install HashPilot
 
@@ -27,14 +34,27 @@ When using npx in your MCP configuration, use `npx -y hashpilot` to auto-confirm
 
 ## Environment Variables
 
-HashPilot requires these environment variables in your MCP configuration:
+HashPilot reads its configuration from the `env` block of your MCP server entry. Only the first three are required.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `HEDERA_NETWORK` | Yes | Network to use: `testnet`, `mainnet`, or `previewnet` |
+| `HEDERA_NETWORK` | Yes | Network to use: `testnet`, `mainnet`, `previewnet` or `local` |
 | `HEDERA_OPERATOR_ID` | Yes | Your Hedera account ID (e.g., `0.0.12345`) |
-| `HEDERA_OPERATOR_KEY` | Yes | Your private key in hex format |
-| `OPENAI_API_KEY` | For RAG | Required for documentation search and code generation |
+| `HEDERA_OPERATOR_KEY` | Yes | Your private key, DER-encoded hex or raw hex (raw hex is assumed ECDSA) |
+| `HEDERA_OPERATOR_KEY_TYPE` | No | `ecdsa` (default) or `ed25519`; only needed for raw hex keys of ED25519 accounts |
+| `OPENAI_API_KEY` | No | Optional. Without it the docs tools answer from Hedera's official documentation search; with it they use HashPilot's full index (SDK examples, HCS standards, protobufs, tool repos), write answers and generate code |
+| `JSON_RPC_RELAY_URL` | No | Production JSON-RPC endpoint for `HEDERA_NETWORK` (the default, Hashio, is rate-limited and development-only) |
+| `MIRROR_NODE_URL` | No | Alternative Mirror Node for `HEDERA_NETWORK` |
+| `HGRAPH_API_KEY` | For GraphQL | Hgraph API key for the `graphql` tool; free at [app.hgraph.com](https://app.hgraph.com) |
+| `HASHPILOT_DATA_DIR` | No | Where the address book, state, backups, exports and deployment history are kept (default `~/.hedera-mcp`) |
+| `CHROMA_URL` | No | Your own ChromaDB server for the docs tools (default: HashPilot's hosted index). See [Self-hosting](/self-hosting) |
+| `CHROMA_AUTH_TOKEN` | No | Token for a ChromaDB server that requires authentication |
+| `STABLECOIN_FACTORY_ADDRESS`, `STABLECOIN_RESOLVER_ADDRESS` | For stablecoins on mainnet/previewnet | Stablecoin Studio contracts; only testnet addresses are built in |
+| `STABLECOIN_CONFIG_ID`, `STABLECOIN_CONFIG_VERSION` | No | Stablecoin Studio config ID and version; defaults match the built-in testnet contracts |
+
+<Note>
+`JSON_RPC_RELAY_URL` and `MIRROR_NODE_URL` only apply to the network named in `HEDERA_NETWORK`. If you switch networks at runtime with `network_switch`, the other networks use the public Hedera endpoints.
+</Note>
 
 ## Getting a Hedera Account
 
@@ -42,17 +62,17 @@ HashPilot requires these environment variables in your MCP configuration:
 2. Create a free account
 3. Navigate to the **Testnet** tab
 4. Copy your **Account ID** (e.g., `0.0.12345`)
-5. Copy your **Private Key** (DER encoded hex string)
+5. Copy your **Private Key**. Both the DER-encoded and the raw hex form shown in the portal work; portal keys are ECDSA
 
 <Warning>
-Never share your private key. Keep it secure and only use testnet keys for development.
+Never share your private key. Keep it secure and only use testnet keys for development. See [Best Practices](/best-practices) for key handling.
 </Warning>
 
 ---
 
 ## Editor Configuration
 
-Choose your AI editor below for specific setup instructions.
+Choose your AI editor below for specific setup instructions. All of them use the same `mcpServers` entry; only the file location differs.
 
 <Tabs>
   <Tab title="Claude Desktop">
@@ -154,16 +174,70 @@ Choose your AI editor below for specific setup instructions.
     4. Test the connection with a simple query
   </Tab>
 
-  <Tab title="VS Code">
-    ### VS Code (with MCP Extension)
+  <Tab title="Gemini CLI">
+    ### Gemini CLI
 
-    First, install the [MCP extension](https://marketplace.visualstudio.com/items?itemName=anthropics.mcp) from the VS Code marketplace.
+    Gemini CLI reads MCP servers from the `mcpServers` object of its settings file.
 
-    **Add to `settings.json`:**
+    **Config file location:**
+    - **User-level** (all projects): `~/.gemini/settings.json`
+    - **Project-level**: `.gemini/settings.json` in the project directory
+
+    **Configuration:**
     ```json
     {
-      "mcp.servers": {
+      "mcpServers": {
         "hashpilot": {
+          "command": "npx",
+          "args": ["-y", "hashpilot"],
+          "env": {
+            "HEDERA_NETWORK": "testnet",
+            "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+            "HEDERA_OPERATOR_KEY": "$HEDERA_OPERATOR_KEY",
+            "OPENAI_API_KEY": "$OPENAI_API_KEY"
+          },
+          "timeout": 60000
+        }
+      }
+    }
+    ```
+
+    Gemini CLI expands `$VARIABLE` and `${VARIABLE}` references in the `env` block from your shell environment, so you can keep the private key out of the settings file. Literal values work too. Gemini CLI only passes the variables listed in `env` to the server, so every variable HashPilot needs must appear there.
+
+    **Or add it from the command line:**
+    ```bash
+    gemini mcp add -s user \
+      -e HEDERA_NETWORK=testnet \
+      -e HEDERA_OPERATOR_ID=0.0.YOUR_ACCOUNT_ID \
+      -e HEDERA_OPERATOR_KEY=YOUR_PRIVATE_KEY_HEX \
+      -e OPENAI_API_KEY=sk-YOUR_OPENAI_KEY \
+      hashpilot npx -y hashpilot
+    ```
+
+    **Steps:**
+    1. Edit the settings file (or run `gemini mcp add` as above)
+    2. Start `gemini` in a terminal
+    3. Run `/mcp` inside the session. HashPilot should show as `CONNECTED` with its tools listed
+    4. Ask: "Use the health_check tool"
+
+    Format verified against the official Gemini CLI documentation: [MCP servers with the Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
+  </Tab>
+
+  <Tab title="VS Code">
+    ### VS Code
+
+    VS Code has built-in MCP support, so no extension is required. Its configuration differs from the other clients in two ways: the top-level key is `servers` rather than `mcpServers`, and each entry declares its transport with `"type": "stdio"`.
+
+    **Config file location:**
+    - **This project only**: `.vscode/mcp.json` in the project root
+    - **All projects**: run the **MCP: Open User Configuration** command from the Command Palette
+
+    **Configuration:**
+    ```json
+    {
+      "servers": {
+        "hashpilot": {
+          "type": "stdio",
           "command": "npx",
           "args": ["-y", "hashpilot"],
           "env": {
@@ -178,11 +252,13 @@ Choose your AI editor below for specific setup instructions.
     ```
 
     **Steps:**
-    1. Install the MCP extension
-    2. Open Settings (Cmd/Ctrl + ,)
-    3. Click "Open Settings (JSON)" in the top right
-    4. Add the configuration above
-    5. Reload VS Code
+    1. Create `.vscode/mcp.json` with the configuration above, or run **MCP: Add Server** from the Command Palette
+    2. Save the file; VS Code offers to start the server
+    3. Open Chat in Agent mode and check that HashPilot's tools are listed under the tools picker
+
+    <Tip>
+    To keep the private key out of the file, use an input prompt: set `"HEDERA_OPERATOR_KEY": "${input:hederaKey}"` and declare a matching entry in the `inputs` array with `"password": true`.
+    </Tip>
   </Tab>
 </Tabs>
 
@@ -215,27 +291,41 @@ If you installed HashPilot globally, you can use `hashpilot` directly instead of
 After configuring your editor, test that HashPilot is working:
 
 1. Ask your AI assistant: **"Run the health_check tool"**
-2. You should see a response with HashPilot version and status
+2. You should see the version, the tool count and your operator account
 
 ```json
 {
   "success": true,
   "data": {
     "status": "healthy",
-    "version": "0.1.0",
+    "version": "0.2.1",
+    "toolCount": 30,
     "network": "testnet",
+    "operatorConfigured": true,
     "operatorId": "0.0.12345"
   }
 }
 ```
 
+Ask for **"health_check with verbose on"** to also see whether the Mirror Node and the ChromaDB host behind the docs tools are reachable, the JSON-RPC relay in use, and the Node.js version.
+
+<Note>
+On startup HashPilot looks up your operator account on the Mirror Node and checks that `HEDERA_OPERATOR_KEY` really belongs to it. If the key does not match, the server refuses to start and the error names both keys. See [Troubleshooting](/troubleshooting#invalid_signature-or-key_prefix_mismatch).
+</Note>
+
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Features" icon="list" href="/features">
-    Learn what HashPilot can do
+  <Card title="Tutorials" icon="graduation-cap" href="/tutorials">
+    End-to-end walkthroughs from first account to verified contract
   </Card>
   <Card title="Tool Reference" icon="wrench" href="/tools">
-    Explore all 30+ tools
+    All 32 tools with their operations and parameters
+  </Card>
+  <Card title="Best Practices" icon="shield-check" href="/best-practices">
+    Keys, networks, RPC providers, costs
+  </Card>
+  <Card title="Features" icon="list" href="/features">
+    Learn what HashPilot can do
   </Card>
 </CardGroup>

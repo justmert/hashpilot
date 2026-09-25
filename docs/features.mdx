@@ -3,16 +3,17 @@ title: Features
 description: Overview of HashPilot capabilities
 ---
 
-HashPilot provides **31 MCP tools with 100+ operations** covering the complete Hedera development workflow. Here's an overview of what you can do.
+HashPilot provides **32 MCP tools with 130+ operations** covering the complete Hedera development workflow. Here's an overview of what you can do.
 
 ## Account Management
 
 Manage Hedera accounts with natural language:
 
-- **Create accounts** with configurable initial HBAR balance
-- **Query balances** for HBAR and all associated tokens
+- **Create accounts** with an ECDSA key pair and a configurable initial HBAR balance
+- **Query balances** for HBAR and all associated tokens (free Mirror Node query, no operator needed)
+- **Get account info** including EVM address, key type, memo, expiration and staking (free)
 - **Transfer HBAR** between accounts
-- **Get account info** including EVM address, keys, and memo
+- **Inspect transaction history** through the Mirror Node (free)
 
 ```
 "Create a new account with 50 HBAR"
@@ -22,23 +23,23 @@ Manage Hedera accounts with natural language:
 
 ## Token Operations (HTS)
 
-Full Hedera Token Service support:
+Fungible token lifecycle through the Hedera Token Service:
 
 | Operation | Description |
 |-----------|-------------|
-| **create** | Create fungible or NFT tokens with custom fees |
-| **associate** | Associate token with account |
+| **create** | Create a fungible token with custom fees (fixed, fractional, royalty) and admin, supply, freeze, KYC, wipe and pause keys |
+| **associate** | Associate a token with an account |
 | **transfer** | Transfer tokens between accounts |
 | **mint** | Mint additional tokens |
-| **burn** | Burn tokens from treasury |
-| **freeze/unfreeze** | Control account transfer ability |
+| **burn** | Burn tokens from the treasury |
+| **freeze/unfreeze** | Control an account's ability to transfer |
 | **kyc_grant/kyc_revoke** | Manage KYC compliance |
-| **pause/unpause** | Halt/resume all token operations |
-| **wipe** | Remove tokens from any account |
+| **pause/unpause** | Halt or resume all token operations |
+| **wipe** | Remove tokens from an account |
 
 ```
-"Create a fungible token called MyToken with symbol MTK"
-"Mint 1000 tokens to account 0.0.12345"
+"Create a fungible token called MyToken with symbol MTK and a supply key"
+"Associate token 0.0.12345 with account 0.0.67890"
 "Transfer 100 MTK tokens to 0.0.67890"
 ```
 
@@ -46,13 +47,14 @@ Full Hedera Token Service support:
 
 Hedera Consensus Service for ordered messaging:
 
-- **Create topics** with configurable admin and submit keys
-- **Submit messages** with auto-chunking for large payloads
-- **Query messages** from topic history (free via Mirror Node)
+- **Create topics**, public or private (submit key), with optional admin key
+- **Submit messages** with automatic chunking for payloads over 1 KB
+- **Query messages** by sequence number from the Mirror Node (free)
+- **Read topic info** from the Mirror Node (free)
 - **Subscribe** to real-time message streams
 
 ```
-"Create a new HCS topic for audit logs"
+"Create a private HCS topic for audit logs"
 "Submit message 'Transaction approved' to topic 0.0.12345"
 "Get the last 10 messages from topic 0.0.12345"
 ```
@@ -62,29 +64,33 @@ Hedera Consensus Service for ordered messaging:
 Deploy and interact with Solidity contracts:
 
 ### Hardhat Integration
-- Initialize new Hardhat projects
+- Scaffold a project with a Hedera-ready config and a sample contract
 - Compile contracts
 - Run tests with Mocha/Chai
-- Deploy to any network
-- Verify on HashScan
+- Deploy with a script or Hardhat Ignition, signed with your operator key
+- Call (free) and execute contract functions
 
 ### Foundry Integration
-- Initialize Foundry projects
-- Build with forge
-- Run fuzz tests
-- Deploy with forge create
-- Execute scripts with broadcast
+- Scaffold a project (runs `git init` and installs `forge-std`)
+- Build with forge, run fuzz tests with gas reports
+- Deploy with `forge create` or a broadcast script
+- Call (free) and send transactions with cast
+- Start and stop a local Anvil node, optionally forking a network
+
+### Verification
+- Verify on Sourcify, which HashScan uses to display source code (mainnet and testnet)
+- Keep a deployment history and export it as JSON, CSV or Markdown
 
 ### JSON-RPC Operations
-- 55+ JSON-RPC methods supported
+- Any method the JSON-RPC relay supports (`eth_*`, `web3_*`, `net_*`, `debug_*`)
 - `eth_call` for read operations (free)
-- `eth_sendRawTransaction` for writes
-- Full EVM compatibility
+- Deploy and execute contracts with the operator key
+- Use a production relay via `JSON_RPC_RELAY_URL`
 
 ```
-"Deploy my Counter.sol contract to testnet"
-"Call the balanceOf function on contract 0x..."
-"Verify my contract on HashScan"
+"Deploy my Greeter.sol contract to testnet"
+"Call the greet function on contract 0x..."
+"Verify my contract on testnet"
 ```
 
 ## Stablecoin Studio
@@ -96,7 +102,7 @@ Enterprise-grade stablecoin management:
 - **Freeze/Unfreeze** individual accounts
 - **KYC management** for compliance
 - **Pause/Unpause** for emergency controls
-- **Role management** (CASHIN, BURN, WIPE, FREEZE, KYC, PAUSE, DELETE)
+- **Role management** (CASHIN, BURN, WIPE, RESCUE, PAUSE, FREEZE, KYC, DELETE)
 - **Proof-of-Reserve** support
 
 ```
@@ -105,26 +111,36 @@ Enterprise-grade stablecoin management:
 "Check stablecoin balance for account 0.0.67890"
 ```
 
-## RAG Documentation
+<Note>
+Built-in Stablecoin Studio contracts exist for testnet. Mainnet and previewnet need `STABLECOIN_FACTORY_ADDRESS` and `STABLECOIN_RESOLVER_ADDRESS` in your configuration.
+</Note>
 
-AI-powered knowledge base with 10,000+ pre-indexed documents:
+## Documentation and Code Generation
+
+AI-powered knowledge base over a pre-indexed ChromaDB collection of Hedera documentation:
 
 ### docs_search
-Semantic search across all Hedera documentation:
+Semantic search with filters for content type, language and code presence:
 ```
 "Search for token creation examples in JavaScript"
 ```
 
 ### docs_ask
-Ask questions and get cited answers:
+Ask questions and get cited answers at your expertise level:
 ```
 "How do scheduled transactions work on Hedera?"
+```
+
+### docs_get_example
+Find working, annotated code examples:
+```
+"Show me an example of creating an NFT in Java"
 ```
 
 ### code_generate
 Generate SDK code from descriptions:
 ```
-"Generate TypeScript code to create an NFT with metadata"
+"Generate TypeScript code to create a fungible token with 2 decimals"
 ```
 
 **Indexed Sources:**
@@ -133,9 +149,10 @@ Generate SDK code from descriptions:
 - Hedera Improvement Proposals (HIPs)
 - Tutorials and Examples
 - Smart Contract Patterns
+- Network fees, exchange rates and staking data
 
 <Note>
-RAG features require an OpenAI API key configured in your MCP settings.
+These four tools require an OpenAI API key in your MCP settings. They query HashPilot's hosted index by default; see [Self-hosting](/self-hosting) to run your own.
 </Note>
 
 ## Development Tools
@@ -143,19 +160,24 @@ RAG features require an OpenAI API key configured in your MCP settings.
 ### Address Book
 Save and manage multiple accounts:
 - Add account references
-- Import accounts with private keys
+- Import accounts with private keys for signing
 - Organize with aliases and nicknames
 
 ### State Management
-- Backup server state
-- Restore from backups
-- Export configuration
+- Backup server state (private keys excluded by default)
+- Restore from backups, replacing or merging
+- Export state as JSON
+
+All persisted data lives in `~/.hedera-mcp` or the directory named by `HASHPILOT_DATA_DIR`.
 
 ### Error Explanation
-Get help understanding Hedera errors:
+Get help understanding Hedera errors, offline and free:
 ```
 "Explain error INSUFFICIENT_PAYER_BALANCE"
 ```
+
+### Health Check
+`health_check` reports version, tool count, network and operator. With `verbose` it also probes the Mirror Node and the docs index and shows the JSON-RPC relay in use.
 
 ### Network Switching
 Switch between networks seamlessly:
@@ -164,20 +186,29 @@ Switch between networks seamlessly:
 - previewnet
 - local (for development)
 
+## Operator Key Handling
+
+HashPilot accepts DER-encoded and raw hex private keys. Raw hex keys are assumed ECDSA unless `HEDERA_OPERATOR_KEY_TYPE=ed25519` is set. On startup the key is checked against the account's key on the Mirror Node, and the server refuses to run with a mismatched key.
+
 ## Auto-Key Resolution
 
 HashPilot automatically uses your configured operator account for all operations. No need to manually specify private keys for every deployment or transaction.
 
 **Resolution order:**
 1. Explicitly provided key in the request
-2. Address book entry (if alias specified)
-3. MCP operator account (default)
+2. MCP operator account (default)
 
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Tutorials" icon="graduation-cap" href="/tutorials">
+    End-to-end walkthroughs with the prompts to use
+  </Card>
   <Card title="Tool Reference" icon="wrench" href="/tools">
     Complete API documentation for all tools
+  </Card>
+  <Card title="Best Practices" icon="shield-check" href="/best-practices">
+    Keys, networks, providers and costs
   </Card>
   <Card title="Troubleshooting" icon="circle-question" href="/troubleshooting">
     Common issues and solutions

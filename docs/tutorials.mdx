@@ -1,0 +1,268 @@
+---
+title: Tutorials
+description: End-to-end walkthroughs, with the prompts to type and what runs under the hood
+---
+
+Each tutorial is a conversation with your AI assistant. The **prompt** is what you type; **under the hood** shows which HashPilot tool and operation the assistant calls, so you can follow along in the [Tool Reference](/tools). Account, token and topic IDs below are examples from testnet; yours will differ.
+
+All tutorials assume HashPilot is [installed](/installation) with `HEDERA_NETWORK=testnet` and a funded operator account. Testnet HBAR is free from [portal.hedera.com](https://portal.hedera.com). Tutorial 5 additionally needs `OPENAI_API_KEY`.
+
+<Note>
+Prompts are natural language. You can phrase them however you like; the assistant maps them to the tools shown.
+</Note>
+
+## 1. Your first account and HBAR transfer
+
+Goal: check the server, create a second account, fund it, and look at its history. Everything except the two transactions is free.
+
+<Steps>
+  <Step title="Check that HashPilot is connected">
+    > Run the health check.
+
+    **Under the hood:** `health_check`. Returns the version, `toolCount: 30`, `network: "testnet"` and your `operatorId`, for example `0.0.5211324`. If `operatorConfigured` is false, fix your MCP configuration before continuing.
+  </Step>
+  <Step title="Look at your operator balance">
+    > What is the balance of 0.0.5211324?
+
+    **Under the hood:** `account_balance` with `accountId: "0.0.5211324"`. This is a Mirror Node query: free, no signature, and it works even without an operator key. The answer is in HBAR (`ℏ`) plus any token balances in their smallest units.
+  </Step>
+  <Step title="Create a new account">
+    > Create a new account with 5 HBAR and the memo "tutorial wallet".
+
+    **Under the hood:** `account_create` with `initialBalance: 5`, `memo: "tutorial wallet"`. HashPilot generates an ECDSA key pair, submits an `AccountCreateTransaction` signed by the operator, and returns the new ID (say `0.0.7401238`), its private and public key, and the transaction ID. The 5 HBAR plus the network fee come out of the operator account.
+
+    <Warning>
+    The response contains the new account's private key. Save it if you intend to use the account outside HashPilot.
+    </Warning>
+  </Step>
+  <Step title="Transfer HBAR to it">
+    > Send 2 HBAR from 0.0.5211324 to 0.0.7401238.
+
+    **Under the hood:** `transfer_hbar` with `from: "0.0.5211324"`, `to: "0.0.7401238"`, `amount: 2`. The operator signs a `CryptoTransfer`. The result includes the transaction ID and the status `SUCCESS`.
+  </Step>
+  <Step title="Confirm the balance and inspect the history">
+    > What is the balance of 0.0.7401238 now? Show its recent transactions.
+
+    **Under the hood:** `account_balance` for the number (7 ℏ), then `mirror_query_account` with `accountId: "0.0.7401238"`, `includeTransactions: true`. Both are free Mirror Node reads. If the transfer is missing, wait a few seconds: the Mirror Node lags consensus slightly.
+  </Step>
+  <Step title="Save the account for later">
+    > Save 0.0.7401238 in my address book as "alice".
+
+    **Under the hood:** `addressbook_manage` with `operation: "add"`, `accountId: "0.0.7401238"`, `alias: "alice"`. To let HashPilot sign for alice later (tutorial 2 needs this), use `import` with her private key instead. Imported keys are stored unencrypted in `~/.hedera-mcp`.
+  </Step>
+</Steps>
+
+## 2. A fungible token with custom fees and a supply key
+
+Goal: create a token that charges a 1% fee on every transfer, give a second account some of it, and mint more. Uses the operator (`0.0.5211324`) as treasury and alice (`0.0.7401238`) from tutorial 1.
+
+<Steps>
+  <Step title="Create the token">
+    > Create a fungible token called "Coffee Points" with symbol CFP, 2 decimals and an initial supply of 100000. Enable a supply key. Add a fractional fee of 1% (minimum 1, maximum 100) collected by 0.0.5211324.
+
+    **Under the hood:** `token_manage` with:
+
+    ```json
+    {
+      "operation": "create",
+      "name": "Coffee Points",
+      "symbol": "CFP",
+      "decimals": 2,
+      "initialSupply": 100000,
+      "supplyKey": true,
+      "customFees": [
+        {
+          "feeType": "fractional",
+          "feeCollectorAccountId": "0.0.5211324",
+          "amount": 1,
+          "denominator": 100,
+          "min": 1,
+          "max": 100
+        }
+      ]
+    }
+    ```
+
+    The operator becomes the treasury and its key becomes the supply key. `initialSupply` is in the smallest unit, so this is 1,000.00 CFP. The response contains the token ID, for example `0.0.7401255`, and a HashScan link.
+  </Step>
+  <Step title="Associate the token with the receiving account">
+    > Associate token 0.0.7401255 with alice's account 0.0.7401238.
+
+    **Under the hood:** `token_manage` with `operation: "associate"`, `tokenId: "0.0.7401255"`, `accountId: "0.0.7401238"`. Association must be signed by the receiving account. If alice was imported into the address book with her key the assistant can use it; otherwise it passes her key as `privateKey`. Skipping this step makes the next transfer fail with `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`.
+  </Step>
+  <Step title="Transfer tokens">
+    > Transfer 250 CFP (that is 25000 units) from 0.0.5211324 to 0.0.7401238.
+
+    **Under the hood:** `token_manage` with `operation: "transfer"`, `tokenId: "0.0.7401255"`, `from: "0.0.5211324"`, `to: "0.0.7401238"`, `amount: 25000`. Amounts are in the smallest unit. The fractional fee applies: the collector receives 1% and alice the rest.
+  </Step>
+  <Step title="Mint more supply">
+    > Mint another 50000 units of 0.0.7401255.
+
+    **Under the hood:** `token_manage` with `operation: "mint"`, `tokenId: "0.0.7401255"`, `amount: 50000`. Works because the token was created with `supplyKey: true`; without it the network answers `TOKEN_HAS_NO_SUPPLY_KEY`. Minted tokens land in the treasury.
+  </Step>
+  <Step title="Check who holds what">
+    > Show the token balances of 0.0.7401238 and 0.0.5211324.
+
+    **Under the hood:** two free `account_balance` calls. Alice shows `0.0.7401255` with roughly 24,750 units (250 CFP minus the 1% fee); the treasury shows the remainder plus the minted supply.
+  </Step>
+</Steps>
+
+Later, the same tool handles `freeze`, `kyc_grant`, `pause` and `wipe`, provided the token was created with the matching key flag.
+
+## 3. HCS: a private topic, a message, and a lookup by sequence number
+
+Goal: create a topic only you can write to, publish a message, and read it back from the Mirror Node.
+
+<Steps>
+  <Step title="Create a private topic">
+    > Create a private HCS topic with the memo "order-audit-log" and an admin key.
+
+    **Under the hood:** `hcs_topic` with `operation: "create"`, `memo: "order-audit-log"`, `submitKey: true`, `adminKey: true`. `submitKey: true` sets the operator key as the topic's submit key, so only transactions signed with it can post. The response contains the topic ID, for example `0.0.7401302`.
+  </Step>
+  <Step title="Submit a message">
+    > Submit the message `{"event":"order.created","id":"A-1042"}` to topic 0.0.7401302.
+
+    **Under the hood:** `hcs_message` with `operation: "submit"`, `topicId: "0.0.7401302"`, `message: "{\"event\":\"order.created\",\"id\":\"A-1042\"}"`. The operator key doubles as the submit key, so nothing else is needed. The result includes the consensus timestamp and the **sequence number** (1 for the first message). Messages over 1 KB are split automatically into up to 20 chunks.
+
+    Submit a second message the same way so there is something to filter on.
+  </Step>
+  <Step title="Query by sequence number">
+    > Show the messages on topic 0.0.7401302 starting at sequence number 2.
+
+    **Under the hood:** `hcs_message` with `operation: "query"`, `topicId: "0.0.7401302"`, `sequenceNumber: 2`, `order: "asc"`. This is a free Mirror Node read. `sequenceNumber` is a lower bound (messages with sequence number greater than or equal to the value), so combine it with `limit: 1` for exactly one message. Messages come back base64 decoded with their consensus timestamps.
+  </Step>
+  <Step title="Inspect the topic">
+    > Show the details of topic 0.0.7401302.
+
+    **Under the hood:** `hcs_topic` with `operation: "info"`. Free. Shows the memo, the admin and submit keys, the auto-renew settings and the current sequence number.
+  </Step>
+  <Step title="Optional: follow new messages">
+    > Subscribe to topic 0.0.7401302 from now on.
+
+    **Under the hood:** `hcs_topic` with `operation: "subscribe"`, `topicId: "0.0.7401302"` (and `startTime` as an ISO 8601 timestamp if you want history). Use `update` to change the memo or auto-renew period later; that needs the admin key set in step 1.
+  </Step>
+</Steps>
+
+## 4. Smart contracts: scaffold, test, deploy and verify
+
+Goal: the same Greeter contract through Foundry and through Hardhat, then verified on Sourcify so HashScan shows the source. Deployment signs with your operator key, which must be **ECDSA** (portal keys are). Foundry needs `forge`, `cast` and `anvil` installed; Hardhat needs `npm`. Sourcify supports testnet (chain 296) and mainnet (chain 295), not previewnet.
+
+### With Foundry
+
+<Steps>
+  <Step title="Scaffold the project">
+    > Create a Foundry project in /Users/me/hedera/greeter-foundry.
+
+    **Under the hood:** `foundry_project` with `operation: "init"`, `directory: "/Users/me/hedera/greeter-foundry"`. Writes `foundry.toml` with the Hedera RPC endpoints, `src/Greeter.sol` (constructor takes a greeting, `greet()` reads it, `setGreeting()` changes it), `test/Greeter.t.sol`, `script/Deploy.s.sol`, `remappings.txt`, `.env.example` and `.gitignore`. It then runs `git init` and `forge install foundry-rs/forge-std`.
+  </Step>
+  <Step title="Build and test">
+    > Build it, then run the tests with a gas report.
+
+    **Under the hood:** `foundry_project` with `operation: "build"`, then `foundry_contract` with `operation: "test"`, `gasReport: true`, both with the project `directory`. Tests run locally and cost nothing. Add `matchTest` or `matchContract` to run a subset.
+  </Step>
+  <Step title="Deploy to testnet">
+    > Deploy src/Greeter.sol:Greeter to testnet with the greeting "Hello from Foundry".
+
+    **Under the hood:** `foundry_contract` with `operation: "create"`, `contractName: "src/Greeter.sol:Greeter"`, `constructorArgs: ["Hello from Foundry"]`, `directory`. `rpcUrl` and `privateKey` are filled in from the active network and the operator key (your `JSON_RPC_RELAY_URL` if set, Hashio otherwise). The response has the contract address, for example `0x9f3c2b7e41d6a05c8e21b4f7d9a3c6e15b0f4d28`, and the transaction hash.
+
+    The generated `script/Deploy.s.sol` is the alternative: it reads `TESTNET_PRIVATE_KEY` from the project's `.env`, and `foundry_contract` with `operation: "script"`, `scriptPath: "script/Deploy.s.sol"`, `broadcast: true` runs it.
+  </Step>
+  <Step title="Read from the contract">
+    > Call greet() on 0x9f3c2b7e41d6a05c8e21b4f7d9a3c6e15b0f4d28.
+
+    **Under the hood:** `foundry_contract` with `operation: "call"`, `address: "0x9f3c..."`, `signature: "greet()(string)"`. A `cast call`, free. To change the greeting use `operation: "send"` with `signature: "setGreeting(string)"` and `callArgs: ["Hi again"]`; that one costs gas.
+  </Step>
+</Steps>
+
+### With Hardhat
+
+<Steps>
+  <Step title="Scaffold the project">
+    > Create a Hardhat project in /Users/me/hedera/greeter-hardhat configured for testnet.
+
+    **Under the hood:** `hardhat_project` with `operation: "init"`, `directory: "/Users/me/hedera/greeter-hardhat"`, `networks: ["testnet"]`. Writes `hardhat.config.js`, `contracts/Greeter.sol`, `scripts/deploy.js` (deploys Greeter with "Hello, Hedera!"), `test/Greeter.test.js`, `.env.example`, `.gitignore` and a `package.json`, then runs `npm install` for Hardhat 3 and the mocha-ethers toolbox. Pass `typescript: true` for a TypeScript project.
+  </Step>
+  <Step title="Compile and test">
+    > Compile the contracts and run the tests.
+
+    **Under the hood:** `hardhat_project` with `operation: "compile"`, then `operation: "test"`, both with `directory`. Local and free.
+  </Step>
+  <Step title="Deploy with the script">
+    > Deploy using scripts/deploy.js to testnet.
+
+    **Under the hood:** `hardhat_contract` with `operation: "deploy"`, `script: "scripts/deploy.js"`, `network: "testnet"`, `directory`. HashPilot injects the operator key as `TESTNET_PRIVATE_KEY`, which the generated config reads, so `.env` can stay empty. The script prints the address, for example `0x4b1d8e2a7c93f605e8d1a2b4c7f9e3d6a0b5c1f2`. Hardhat Ignition projects use `operation: "deploy_ignition"` with `module` instead.
+  </Step>
+  <Step title="Get the ABI and call the contract">
+    > Get the Greeter ABI, then call greet() on 0x4b1d8e2a7c93f605e8d1a2b4c7f9e3d6a0b5c1f2.
+
+    **Under the hood:** `hardhat_project` with `operation: "get_artifacts"`, `contractName: "Greeter"` returns the ABI and bytecode. Then `hardhat_contract` with `operation: "call"`, `contractAddress`, `abi`, `method: "greet"`. Free. `operation: "execute"` with `method: "setGreeting"` and `methodArgs: ["Hi again"]` sends a transaction.
+  </Step>
+</Steps>
+
+### Verify on Sourcify
+
+<Steps>
+  <Step title="Submit the source">
+    > Verify contract 0x4b1d8e2a7c93f605e8d1a2b4c7f9e3d6a0b5c1f2 on testnet. The contract is Greeter in contracts/Greeter.sol.
+
+    **Under the hood:** `verify_contract` with `address: "0x4b1d..."`, `network: "testnet"`, `contractName: "Greeter"`, `filePath: "/Users/me/hedera/greeter-hardhat/contracts/Greeter.sol"`. HashScan reads verification status from Sourcify, so a successful result shows the source at `https://hashscan.io/testnet/contract/0x4b1d...`. Use the same source and compiler settings that produced the deployed bytecode.
+  </Step>
+  <Step title="If the automated path fails">
+    > Prepare verification for 0x4b1d8e2a7c93f605e8d1a2b4c7f9e3d6a0b5c1f2 in my Hardhat project.
+
+    **Under the hood:** `hardhat_contract` with `operation: "verify"`, `address`, `directory`. It locates the build-info JSON and returns the alternatives: `npx hardhat verify --network testnet <address>` (needs `@nomicfoundation/hardhat-verify` 3.x with Sourcify enabled) or uploading the build-info at [verify.sourcify.dev](https://verify.sourcify.dev/) for chain 296. For the Foundry deployment, `forge verify-contract --verifier sourcify --chain 296 <address> src/Greeter.sol:Greeter` does the same.
+  </Step>
+  <Step title="Review your deployments">
+    > List my testnet deployments as markdown.
+
+    **Under the hood:** `deployment_history` with `network: "testnet"`, `exportFormat: "markdown"`. Free. Deployments made through `deploy_contract` (the unified tool that auto-detects Hardhat or Foundry) are recorded in `deployments.json` in the data directory.
+  </Step>
+</Steps>
+
+## 5. Ask the docs and generate SDK code
+
+Goal: use the retrieval tools to answer a question with citations and turn the answer into runnable code. Needs `OPENAI_API_KEY`; the queries run against HashPilot's hosted ChromaDB index (or your own, see [Self-hosting](/self-hosting)). These calls cost OpenAI tokens, not HBAR.
+
+<Steps>
+  <Step title="Check the index is reachable">
+    > Run health_check with verbose on.
+
+    **Under the hood:** `health_check` with `verbose: true`. `services.chromadb.status` should be `reachable` and `ragEnabled` true.
+  </Step>
+  <Step title="Search for code examples">
+    > Search the Hedera docs for HCS message chunking, only results with code, in JavaScript.
+
+    **Under the hood:** `docs_search` with `query: "HCS message chunking"`, `hasCode: true`, `language: "javascript"`, `limit: 5`. Returns ranked chunks with titles, source URLs, excerpts and relevance scores.
+  </Step>
+  <Step title="Ask a question">
+    > How do scheduled transactions work on Hedera? Explain it for a beginner and include TypeScript examples.
+
+    **Under the hood:** `docs_ask` with `question`, `expertiseLevel: "beginner"`, `includeCodeExamples: true`, `language: "typescript"`. The answer cites the documentation sections it was built from.
+  </Step>
+  <Step title="Find a working example">
+    > Show me a simple Java example that mints an NFT.
+
+    **Under the hood:** `docs_get_example` with `description: "mint an NFT"`, `language: "java"`, `complexity: "simple"`. Returns annotated code with its source reference.
+  </Step>
+  <Step title="Generate code">
+    > Generate production-ready TypeScript that creates a fungible token with 2 decimals and a supply key, with error handling.
+
+    **Under the hood:** `code_generate` with `description`, `language: "typescript"`, `style: "production"`, `includeErrorHandling: true`. The generator retrieves indexed examples first, so the output follows current SDK usage. Review it before running it against mainnet.
+  </Step>
+  <Step title="Decode an error">
+    > What does TOKEN_NOT_ASSOCIATED_TO_ACCOUNT mean and how do I fix it?
+
+    **Under the hood:** `error_explain` with `errorCode: "TOKEN_NOT_ASSOCIATED_TO_ACCOUNT"`. This one is a local lookup: no OpenAI key, no network, no cost.
+  </Step>
+</Steps>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Best Practices" icon="shield-check" href="/best-practices">
+    Keys, networks, RPC providers, backups and costs
+  </Card>
+  <Card title="Tool Reference" icon="wrench" href="/tools">
+    Every tool, operation and parameter used above
+  </Card>
+</CardGroup>

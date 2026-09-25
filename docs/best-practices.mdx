@@ -1,0 +1,117 @@
+---
+title: Best Practices
+description: Keys, networks, RPC providers, costs and backups when using HashPilot
+---
+
+HashPilot signs real transactions with your key. These guidelines keep that safe and cheap.
+
+## Key handling
+
+### DER or raw hex, and the key type
+
+`HEDERA_OPERATOR_KEY` accepts two formats:
+
+- **DER-encoded hex** (starts with `302e...` for ED25519 or `3030...` for ECDSA). The curve is part of the encoding, nothing else to configure.
+- **Raw 64-character hex** (with or without `0x`). The bytes do not say which curve they belong to. HashPilot assumes **ECDSA**, which is what the Hedera Portal issues by default. For an ED25519 account, set `HEDERA_OPERATOR_KEY_TYPE=ed25519` (`ecdsa` is also accepted to make the assumption explicit).
+
+Prefer ECDSA operator accounts. The EVM tools (`rpc_deploy_contract`, `rpc_execute_contract`, Hardhat and Foundry deployments) sign with an ECDSA key and log a warning when the operator key is ED25519.
+
+### The startup key verification
+
+When the server starts it fetches your operator account from the Mirror Node and compares the account's public key with the one derived from `HEDERA_OPERATOR_KEY`:
+
+1. If they match, the server starts.
+2. If the key was raw hex and does not match, HashPilot re-interprets it on the other curve and uses that when it matches (with a warning).
+3. Otherwise it **refuses to start** with an error that names the account's key type and prefix and the derived key, so a wrong key surfaces immediately instead of as `INVALID_SIGNATURE` on your first transaction.
+4. Accounts with threshold or key-list keys skip the comparison. If the Mirror Node is unreachable the server starts and logs a warning.
+
+`account_info` on your operator ID shows the key type the network has on record.
+
+### Never commit keys
+
+- MCP configuration files (`claude_desktop_config.json`, `.cursor/mcp.json`, `mcp_config.json`, `.gemini/settings.json`) hold the key in plain text. Keep them out of version control; for Gemini CLI use `$VARIABLE` references in the `env` block so the file contains no secret.
+- Hardhat and Foundry projects scaffolded by HashPilot read keys from `.env`, and the generated `.gitignore` excludes it. HashPilot injects the operator key into deployments at runtime, so you rarely need to write it into `.env` at all.
+- `addressbook_manage import` stores private keys **unencrypted** in the data directory. Import only what you need, and prefer `add` (no key) for accounts you only look up.
+- `state_manage backup` and `export` exclude private keys unless you pass `includePrivateKeys: true`. Treat such files like the keys themselves.
+- Use separate accounts for testnet and mainnet. A testnet key that leaks costs nothing; a mainnet key that leaks costs everything in the account.
+
+## Choosing a network
+
+| Network | Use it for | Notes |
+|---------|-----------|-------|
+| `testnet` | Development and CI | Free HBAR from [portal.hedera.com](https://portal.hedera.com). Chain ID 296. Reset occasionally; do not rely on IDs living forever |
+| `previewnet` | Trying features before they reach testnet | **Reset regularly**, accounts and tokens disappear. Chain ID 297. No Sourcify verification, no built-in Stablecoin Studio contracts |
+| `mainnet` | Production | Real HBAR. Chain ID 295. Requires a production RPC provider (below) and explicit Stablecoin Studio addresses |
+| `local` | A local node | Chain ID 298, Mirror Node at `localhost:5551`, relay at `localhost:7546` |
+
+Develop on testnet. Use `network_switch` to move between networks in a session; the choice is persisted, so check `network_info` (or `health_check`) before sending anything after a restart. `JSON_RPC_RELAY_URL` and `MIRROR_NODE_URL` only apply to the network named in `HEDERA_NETWORK`; other networks use the public endpoints.
+
+## Production RPC providers
+
+The default JSON-RPC relay is Hashio (`https://<network>.hashio.io/api`). Hashio is **rate-limited and intended for development only**. Before going to mainnet, or when you hit rate limits on testnet, set `JSON_RPC_RELAY_URL` to a provider endpoint for the network in `HEDERA_NETWORK`:
+
+- [Arkhia](https://arkhia.io)
+- [QuickNode](https://www.quicknode.com)
+- [Validation Cloud](https://www.validationcloud.io)
+- Your own [hiero-json-rpc-relay](https://github.com/hiero-ledger/hiero-json-rpc-relay)
+
+```json
+"env": {
+  "HEDERA_NETWORK": "mainnet",
+  "JSON_RPC_RELAY_URL": "https://your-provider.example/hedera/mainnet/<key>"
+}
+```
+
+The override is used by `rpc_*`, the deployment tools, Hardhat and Foundry. `health_check` with `verbose: true` shows the relay URL in use.
+
+## Mirror Node usage
+
+Reads through the Mirror Node are free and need no operator key: `account_balance`, `account_info`, `mirror_query_account`, every `mirror_query` resource, `hcs_message query`, `hcs_topic info`, and the docs behind `index-network`. Two things to keep in mind:
+
+- **The 60-day implicit window.** On the Hedera-operated Mirror Nodes, history endpoints without a timestamp filter only return the last 60 days. Affected endpoints include `/api/v1/transactions`, `/api/v1/accounts/{id}` (the transactions it embeds), `/api/v1/contracts/results` and `/api/v1/contracts/results/logs`. Older data is still there: query it with an explicit timestamp range of at most 60 days. `mirror_query_account` with `includeTransactions` is subject to this window.
+- **Lag and limits.** Data appears on the Mirror Node a few seconds after consensus, so a balance read straight after a transfer may be one step behind. The public nodes are rate-limited; for heavy use set `MIRROR_NODE_URL` to a provider (Arkhia, Validation Cloud and others host Mirror Nodes) or your own.
+
+## Token association before transfer
+
+A Hedera account can only hold a token it has associated with. Transferring to an unassociated account fails with `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`. The order is:
+
+1. `token_manage associate` for the **receiving** account. The receiving account must sign, so for an account other than the operator pass that account's `privateKey` (or import it into the address book first).
+2. `token_manage transfer` from the treasury or holder.
+
+Amounts are in the token's smallest unit: with `decimals: 2`, transferring `250` moves `2.50` tokens. `account_balance` reports token balances the same way. A transfer also needs the sender's key: transfers from the operator's own account need nothing extra, transfers from another account need `senderPrivateKey`.
+
+## Contract verification via Sourcify
+
+HashScan shows verified source code from [Sourcify](https://sourcify.dev). Sourcify supports Hedera **mainnet (chain 295)** and **testnet (chain 296)**; previewnet (297) cannot be verified.
+
+- `verify_contract` submits the source with `address`, `network`, `contractName` and `filePath`. Use the exact source and compiler settings that produced the deployed bytecode; a mismatch gives a partial match or a failure.
+- `hardhat_contract verify` finds the Hardhat build-info file and returns the alternatives: `npx hardhat verify --network <network> <address>` with `@nomicfoundation/hardhat-verify` 3.x and Sourcify enabled, or uploading the build-info at [verify.sourcify.dev](https://verify.sourcify.dev/).
+- With Foundry, `forge verify-contract --verifier sourcify --chain 296 <address> src/Greeter.sol:Greeter` does the same from the command line.
+
+`deployment_history` records every deployment made through `deploy_contract` with its address and network, which is what you need for verification later.
+
+## Data directory and backups
+
+Everything HashPilot persists lives in one directory: `~/.hedera-mcp` by default, or `HASHPILOT_DATA_DIR` if set. It holds the address book, the persisted network choice, `deployments.json`, and the `backups/` and `exports/` folders. Files from older versions that lived inside the package are migrated there on first start.
+
+- Set `HASHPILOT_DATA_DIR` when you run several editors with different accounts, or want the data on an encrypted volume.
+- Run `state_manage backup` before upgrading HashPilot or moving machines. Backups are timestamped JSON in `backups/`; `outputPath` is optional.
+- `state_manage restore` replaces the current state, or merges it with `merge: true`.
+- `state_manage export` writes a readable JSON snapshot (`format: pretty` by default) to `exports/`.
+- Backups exclude private keys unless you ask for them. If the address book holds imported keys and you need them in the backup, pass `includePrivateKeys: true` and store the file as carefully as the keys.
+
+## Cost awareness
+
+| Free (no HBAR) | Costs HBAR | Costs OpenAI tokens |
+|----------------|-----------|---------------------|
+| `health_check`, `network_info`, `network_switch` | `account_create` (fee plus the initial balance) | `docs_search` |
+| `account_balance`, `account_info`, `mirror_query_account`, `mirror_query` | `transfer_hbar` | `docs_ask` |
+| `hcs_message query`, `hcs_topic info` | every `token_manage` operation | `docs_get_example` |
+| `rpc_call` read methods, `rpc_call_contract` | `hcs_topic create` and `update`, `hcs_message submit` | `code_generate` |
+| `hardhat_contract call`, `foundry_contract call` | `rpc_deploy_contract`, `rpc_execute_contract`, `deploy_contract` | |
+| `hardhat_project` and `foundry_project` (all operations) | `hardhat_contract deploy`, `deploy_ignition`, `execute` | |
+| `foundry_contract test`, `anvil_start`, `anvil_stop`, `script` without `broadcast` | `foundry_contract create`, `send`, `script` with `broadcast: true` | |
+| `addressbook_manage`, `state_manage`, `deployment_history`, `error_explain` | `stablecoin_manage` except `info`, `balance` and `role_check` | |
+| `verify_contract`, `hardhat_contract verify` | | |
+
+Fees are paid by the operator account. Reads never need HBAR, so a read-only setup with no operator key still works for balances, HCS history, Mirror Node queries and error lookups. The docs tools need `OPENAI_API_KEY` and are billed by OpenAI; `error_explain` is a local lookup and needs neither.

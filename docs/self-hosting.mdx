@@ -1,0 +1,121 @@
+---
+title: Self-hosting the docs index
+description: Run your own ChromaDB backend for the documentation and code generation tools
+---
+
+The four documentation tools (`docs_search`, `docs_ask`, `docs_get_example`, `code_generate`) retrieve chunks from a ChromaDB vector index before calling OpenAI. By default HashPilot queries the index it hosts at `https://chroma.hash-pilot.app`, so **you do not need any of this page to use the tools**: set `OPENAI_API_KEY` and you are done.
+
+Self-host when you want the index on your own infrastructure, need to work offline from the hosted instance, or want to add sources of your own.
+
+## What you need
+
+| Requirement | Why |
+|-------------|-----|
+| Docker (or another way to run the ChromaDB server) | Stores the vectors |
+| `OPENAI_API_KEY` | Embeddings during indexing, and embeddings plus completions at query time |
+| A clone of the HashPilot repository | The indexing scripts are not part of the npm package |
+| `GITHUB_TOKEN` (optional) | Raises the GitHub API limit from 60 requests per hour while indexing SDK repositories, HIPs and tutorials |
+| `FIRECRAWL_URL` or `FIRECRAWL_API_KEY` (optional) | Only for the crawler-based `index-docs` script and the `index-all` preflight check |
+
+Indexing several thousand pages costs OpenAI embedding tokens. Do it once, then re-run when you want fresher content.
+
+## 1. Run ChromaDB
+
+Start the ChromaDB server with a persistent volume, pinned to a 1.5.x image:
+
+```bash
+docker run -d \
+  --name hashpilot-chroma \
+  -p 8000:8000 \
+  -v hashpilot-chroma-data:/data \
+  chromadb/chroma:1.5.0
+```
+
+The server keeps its data in `/data` inside the container. Check that it answers:
+
+```bash
+curl http://localhost:8000/api/v2/heartbeat
+```
+
+The repository ships two reference setups: `docker/chromadb/docker-compose.yml` for a local instance, and `docker/deploy/` (compose file, `Dockerfile.indexer`, `deploy.sh`) for a production host behind Traefik with the indexer running as a container. Put a reverse proxy with authentication in front of any instance that is reachable from the internet, and pass the token to HashPilot with `CHROMA_AUTH_TOKEN`.
+
+<Warning>
+Do not change the embedding model in `src/config/rag.ts` after indexing. Vectors from different models are not comparable; changing the model requires a full re-index.
+</Warning>
+
+## 2. Configure the MCP server
+
+Point HashPilot at your instance through the `env` block of your MCP configuration:
+
+| Variable | Description |
+|----------|-------------|
+| `CHROMA_URL` | Base URL of your ChromaDB server, e.g. `http://localhost:8000`. Defaults to the hosted instance when unset |
+| `CHROMA_AUTH_TOKEN` | Bearer token, if your server or proxy requires one |
+| `OPENAI_API_KEY` | Required to build an index and to query HashPilot's index, hosted or self-hosted. Without it, or if the index is unreachable, the docs tools fall back to Hedera's official documentation search |
+
+```json
+{
+  "mcpServers": {
+    "hashpilot": {
+      "command": "npx",
+      "args": ["-y", "hashpilot"],
+      "env": {
+        "HEDERA_NETWORK": "testnet",
+        "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
+        "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+        "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY",
+        "CHROMA_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+Restart your editor and ask for **"health_check with verbose on"**. The `services.chromadb` entry shows the URL in use and whether the heartbeat succeeded.
+
+Optional tuning variables read by the same config: `RAG_TOP_K` (results per query, default 5), `RAG_MIN_SCORE` (similarity threshold, default 0.7), `RAG_CHUNK_SIZE` and `RAG_CHUNK_OVERLAP` (tokens, used when indexing).
+
+## 3. Build the index
+
+Clone the repository, install dependencies and create a `.env` file (the scripts load it with dotenv):
+
+```bash
+git clone https://github.com/justmert/hashpilot.git
+cd hashpilot
+npm install
+cat > .env <<'ENV'
+OPENAI_API_KEY=sk-...
+CHROMA_URL=http://localhost:8000
+# CHROMA_AUTH_TOKEN=...
+# GITHUB_TOKEN=ghp_...
+# FIRECRAWL_URL=http://localhost:3002   or   FIRECRAWL_API_KEY=fc-...
+ENV
+```
+
+Then run the indexers. Each one writes into the shared `hedera-docs-all` collection.
+
+| Command | Source | Needs |
+|---------|--------|-------|
+| `npm run index-all` | Runs a preflight check, then `index-docs-repo`, `index-sdk`, `index-hips`, `index-network` and `index-tutorials` in sequence, and writes `RAG_COVERAGE_REPORT.md` | `OPENAI_API_KEY`, ChromaDB, GitHub access; the preflight also requires Firecrawl to be configured |
+| `npm run index-docs-repo` | docs.hedera.com from its source repository (`hashgraph/hedera-docs`): every MDX page and API spec, no crawler needed. Supports `-- --dry-run`, `-- --max N` and `-- --dir /path/to/checkout` | `OPENAI_API_KEY`, ChromaDB |
+| `npm run index-docs` | docs.hedera.com crawled from the rendered site with Firecrawl. Supports `-- --max N` | `FIRECRAWL_URL` or `FIRECRAWL_API_KEY` |
+| `npm run index-sdk` | READMEs, docs and examples from the JavaScript, Java, Go, Rust and Python SDK repositories | GitHub API; `GITHUB_TOKEN` recommended |
+| `npm run index-hips` | All Hedera Improvement Proposals | GitHub API; `GITHUB_TOKEN` recommended |
+| `npm run index-tutorials` | Tutorials, local node guides and the smart contract example repositories | GitHub API; `GITHUB_TOKEN` recommended |
+| `npm run index-network` | Live fee schedules, exchange rates, staking and node data from the public Mirror Nodes | Network access only |
+
+If you do not have Firecrawl, skip `index-all` and run the individual scripts; `index-docs-repo` gives the same documentation coverage without a crawler. Each script prints its chunk count when it finishes.
+
+Check the result with a query through your editor, or run the coverage script:
+
+```bash
+npm run test-rag
+```
+
+## Keeping it fresh
+
+Re-run the indexers when Hedera releases new documentation. `index-network` is the cheapest and most time-sensitive (fees and exchange rates); the others change slowly. On a shared host, run them from cron or the `deploy.sh` helper in `docker/deploy/`.
+
+## Going back to the hosted index
+
+Remove `CHROMA_URL` and `CHROMA_AUTH_TOKEN` from your MCP configuration and restart the editor.

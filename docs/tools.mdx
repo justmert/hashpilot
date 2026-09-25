@@ -4,56 +4,87 @@ description: Complete reference for all HashPilot MCP tools
 ---
 
 <Info>
-**You don't need to memorize these tools!** Simply describe what you want to do in natural language, and your AI assistant will automatically select and use the right tools. This reference is here to show you the full power of HashPilot's integration capabilities.
+  **You don't need to memorize these tools!** Simply describe what you want to do in natural
+  language, and your AI assistant will automatically select and use the right tools. This reference
+  is here to show you the full power of HashPilot's integration capabilities.
 </Info>
 
-HashPilot provides **31 MCP tools** that expose **100+ operations** for Hedera development. Tools use a composite pattern where related operations are grouped together.
+HashPilot exposes **32 MCP tools**. Related operations are grouped into composite tools that take an `operation` parameter, so the 32 tools cover more than 100 operations. Every tool name, operation and parameter on this page is taken from the server's tool schema; `health_check` reports the live tool count.
 
 ## Tool Summary
 
-| Category | Tools | Operations | Description |
-|----------|-------|------------|-------------|
-| **Core** | 4 | 4 | Account create, balance, info, transfer |
-| **Network** | 2 | 2 | Network info and switching |
-| **Tokens (HTS)** | 1 | 12 | Full token lifecycle management |
-| **Consensus (HCS)** | 2 | 5 | Topic and message operations |
-| **Address Book** | 1 | 5 | Account organization |
-| **JSON-RPC** | 4 | 4 | EVM compatibility (55+ RPC methods) |
-| **RAG/Docs** | 3 | 3 | Documentation search and code generation |
-| **Deployment** | 4 | 4 | Contract deploy, verify, history |
-| **Hardhat** | 2 | 15 | Project and contract operations |
-| **Foundry** | 2 | 17 | Forge, cast, and anvil operations |
-| **Stablecoin** | 1 | 18 | Enterprise stablecoin management |
-| **Utilities** | 5 | 11+ | Health check, state, errors |
+| Category            | Tools                                                                              | Description                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Health**          | `health_check`                                                                     | Version, tool count, network, service reachability                                                |
+| **Accounts**        | `account_create`, `account_balance`, `account_info`, `transfer_hbar`               | Create, query (free) and fund accounts                                                            |
+| **Network**         | `network_info`, `network_switch`                                                   | Inspect and switch the active network                                                             |
+| **Tokens (HTS)**    | `token_manage`                                                                     | 12 operations: full token lifecycle                                                               |
+| **Consensus (HCS)** | `hcs_topic`, `hcs_message`                                                         | 4 topic operations, 2 message operations                                                          |
+| **Address book**    | `addressbook_manage`                                                               | 5 operations: aliases for accounts and keys                                                       |
+| **State**           | `state_manage`                                                                     | 3 operations: backup, restore, export                                                             |
+| **JSON-RPC**        | `rpc_call`, `rpc_call_contract`, `rpc_deploy_contract`, `rpc_execute_contract`     | EVM access through the JSON-RPC relay                                                             |
+| **Docs and code**   | `docs_search`, `docs_ask`, `docs_get_example`, `code_generate`                     | RAG over the Hedera documentation index, falling back to Hedera's official docs search            |
+| **Deployment**      | `deploy_contract`, `verify_contract`, `deployment_history`, `mirror_query_account` | Unified deploys, Sourcify verification, history                                                   |
+| **Mirror Node**     | `mirror_query`                                                                     | 32 read-only resources: transactions, tokens, NFTs, topics, contracts, schedules, blocks, network |
+| **GraphQL**         | `graphql`                                                                          | Schema exploration, query generation, validation and execution over Hgraph                        |
+| **Hardhat**         | `hardhat_project`, `hardhat_contract`                                              | 10 project operations, 5 contract operations                                                      |
+| **Foundry**         | `foundry_project`, `foundry_contract`                                              | 10 project operations, 7 contract operations                                                      |
+| **Stablecoin**      | `stablecoin_manage`                                                                | 18 operations via Hedera Stablecoin Studio                                                        |
+| **Errors**          | `error_explain`                                                                    | Hedera error code lookup and guidance                                                             |
 
-**Total: 31 tools, 100+ operations**
+**Total: 32 tools.** Tools marked **FREE** do not submit a transaction and cost no HBAR. See [Cost awareness](/best-practices#cost-awareness) for the full breakdown.
+
+---
+
+## Health (1 tool)
+
+### health_check
+
+Check server health and status. **FREE.**
+
+- **verbose** (boolean): Also probe external services
+
+Returns `status`, `version`, `toolCount`, `network`, `operatorConfigured` and `operatorId`. With `verbose: true` it adds:
+
+- `services.mirrorNode`: URL and reachability
+- `services.jsonRpcRelay`: URL in use (your `JSON_RPC_RELAY_URL` or the Hashio default)
+- `services.chromadb`: URL, reachability of the docs index, and `ragEnabled` (true when `OPENAI_API_KEY` is set)
+- `system`: Node.js version, platform and architecture
 
 ---
 
 ## Account Management (4 tools)
 
-### health_check
-Check server health and status.
-- **verbose** (boolean): Include detailed status
-
 ### account_create
-Create new Hedera account with ECDSA key pair.
+
+Create a new Hedera account with an auto-generated **ECDSA** key pair, funded from the operator account.
+
 - **initialBalance** (number): Initial HBAR (default: 1)
-- **publicKey** (string): Existing key to use
-- **memo** (string): Account memo
+- **memo** (string): Account memo (max 100 chars)
+- **publicKey** (string): Use an existing public key instead of generating one
+
+Returns the new account ID, its private and public key, and the transaction ID. Costs the network fee plus the initial balance.
 
 ### account_balance
-Query HBAR and token balances. **FREE via Mirror Node.**
-- **accountId** (string, required): Account ID
+
+Query HBAR and token balances for any account. **FREE via Mirror Node, no operator needed.**
+
+- **accountId** (string, required): Account ID (`0.0.xxxxx`)
+
+Token balances are returned in the token's smallest unit; apply the token's decimals yourself.
 
 ### account_info
-Get comprehensive account information.
+
+Get account details: balance, EVM address, public key and key type, memo, auto-renew period, expiration and staking info. **FREE via Mirror Node, no operator needed.**
+
 - **accountId** (string, required): Account ID
 
 ### transfer_hbar
-Transfer HBAR between accounts.
-- **from** (string): Source (defaults to operator)
-- **to** (string, required): Destination
+
+Transfer HBAR between accounts. Signed by the operator, so the operator must be the source or have signing authority over it.
+
+- **from** (string, required): Source account ID
+- **to** (string, required): Destination account ID
 - **amount** (number, required): HBAR amount
 
 ---
@@ -61,298 +92,420 @@ Transfer HBAR between accounts.
 ## Network Management (2 tools)
 
 ### network_info
-Get current network configuration. No parameters.
+
+Return the active network, its Mirror Node URL and its JSON-RPC relay endpoint. **FREE.** No parameters.
 
 ### network_switch
-Switch between networks.
-- **network** (string, required): mainnet, testnet, previewnet, local
+
+Switch the active network. The choice is saved in the data directory and survives restarts.
+
+- **network** (string, required): `mainnet`, `testnet`, `previewnet` or `local`
+
+<Note>
+  `JSON_RPC_RELAY_URL` and `MIRROR_NODE_URL` only apply to the network named in `HEDERA_NETWORK`.
+  After switching to another network HashPilot uses the public Hedera endpoints for it.
+</Note>
 
 ---
 
 ## Token Operations - HTS (1 tool, 12 operations)
 
 ### token_manage
-Unified token management covering the complete HTS lifecycle.
 
-**Operations:**
+Unified fungible token management. Amounts and supplies are in the token's smallest unit (with `decimals: 2`, an amount of `100` is `1.00`).
 
-| Operation | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `create` | Create fungible/NFT token | name, symbol, decimals, initialSupply, treasuryAccountId, supplyKey, adminKey, freezeKey, kycKey, pauseKey, wipeKey, customFees |
-| `associate` | Associate token with account | tokenId, accountId |
-| `dissociate` | Dissociate token from account | tokenId, accountId |
-| `transfer` | Transfer tokens | tokenId, from, to, amount |
-| `mint` | Mint additional tokens | tokenId, amount, metadata (for NFTs) |
-| `burn` | Burn tokens from treasury | tokenId, amount, serialNumbers (for NFTs) |
-| `freeze` | Freeze account for token | tokenId, accountId |
-| `unfreeze` | Unfreeze account | tokenId, accountId |
-| `kyc_grant` | Grant KYC to account | tokenId, accountId |
-| `kyc_revoke` | Revoke KYC from account | tokenId, accountId |
-| `pause` | Pause all token operations | tokenId |
-| `unpause` | Resume token operations | tokenId |
-| `wipe` | Wipe tokens from account | tokenId, accountId, amount |
+| Operation    | Description                                                                  | Key Parameters                                                                                                                                         |
+| ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create`     | Create a fungible token                                                      | `name`, `symbol`, `decimals` (default 0), `initialSupply`, `memo`, `adminKey`, `supplyKey`, `freezeKey`, `kycKey`, `wipeKey`, `pauseKey`, `customFees` |
+| `associate`  | Associate a token with an account (required before it can receive the token) | `tokenId`, `accountId`, `privateKey` (the account's key when it is not the operator)                                                                   |
+| `transfer`   | Transfer tokens                                                              | `tokenId`, `from`, `to`, `amount`, `senderPrivateKey` (when `from` is not the operator)                                                                |
+| `mint`       | Mint additional supply (needs supply key)                                    | `tokenId`, `amount`                                                                                                                                    |
+| `burn`       | Burn supply from the treasury (needs supply key)                             | `tokenId`, `amount`                                                                                                                                    |
+| `freeze`     | Freeze an account for the token (needs freeze key)                           | `tokenId`, `accountId`                                                                                                                                 |
+| `unfreeze`   | Unfreeze an account                                                          | `tokenId`, `accountId`                                                                                                                                 |
+| `kyc_grant`  | Grant KYC to an account (needs KYC key)                                      | `tokenId`, `accountId`                                                                                                                                 |
+| `kyc_revoke` | Revoke KYC                                                                   | `tokenId`, `accountId`                                                                                                                                 |
+| `pause`      | Pause all operations on the token (needs pause key)                          | `tokenId`                                                                                                                                              |
+| `unpause`    | Resume operations                                                            | `tokenId`                                                                                                                                              |
+| `wipe`       | Remove tokens from an account (needs wipe key)                               | `tokenId`, `accountId`, `amount`                                                                                                                       |
+
+The key flags (`adminKey`, `supplyKey`, `freezeKey`, `kycKey`, `wipeKey`, `pauseKey`) are booleans. When enabled, the operator key is set as that key, and the operator account is the treasury.
+
+**Custom fees** (`customFees`, array, `create` only): each entry has `feeType` (`fixed`, `fractional` or `royalty`) and `feeCollectorAccountId`, plus `amount` (fixed amount, or the numerator for fractional fees), `denominator`, `min`, `max`, `denominatingTokenId` (fixed fees paid in another token) and `fallbackFee` (royalty fees).
 
 ---
 
-## Consensus Service - HCS (2 tools, 5 operations)
+## Consensus Service - HCS (2 tools, 6 operations)
 
 ### hcs_topic
-Topic management for Hedera Consensus Service.
 
-| Operation | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `create` | Create new topic | memo, adminKey, submitKey, autoRenewPeriod |
-| `update` | Update topic properties | topicId, memo, adminKey, submitKey |
-| `delete` | Delete topic | topicId |
+Topic management.
+
+| Operation   | Description                                                                                          | Key Parameters                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `create`    | Create a topic. `submitKey: true` sets the operator key as submit key, which makes the topic private | `memo`, `adminKey`, `submitKey`, `autoRenewPeriod` |
+| `update`    | Update memo or auto-renew period (needs admin key)                                                   | `topicId`, `memo`, `autoRenewPeriod`               |
+| `subscribe` | Subscribe to new messages                                                                            | `topicId`, `startTime` (ISO 8601)                  |
+| `info`      | Read topic details from the Mirror Node (**FREE**)                                                   | `topicId`                                          |
 
 ### hcs_message
-Message operations for HCS topics.
 
-| Operation | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `submit` | Submit message (auto-chunks >1KB) | topicId, message, submitKey |
-| `query` | Query message history (**FREE**) | topicId, limit, order, sequenceNumber |
+Message operations. `topicId` is required for both operations.
+
+| Operation | Description                                                                    | Key Parameters                                                                                                     |
+| --------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `submit`  | Submit a message. Messages over 1 KB are split automatically (up to 20 chunks) | `topicId`, `message`                                                                                               |
+| `query`   | Read message history from the Mirror Node (**FREE**), base64 decoded           | `topicId`, `limit`, `order` (`asc`/`desc`), `sequenceNumber` (returns messages with sequence number >= this value) |
 
 ---
 
 ## Address Book (1 tool, 5 operations)
 
 ### addressbook_manage
-Account reference and organization.
 
-| Operation | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `add` | Add account reference (no key) | accountId, alias, nickname |
-| `import` | Import account WITH private key | accountId, alias, privateKey |
-| `list` | List all saved accounts | - |
-| `update` | Update account nickname | alias, nickname |
-| `remove` | Remove from address book | alias |
+Aliases for accounts you work with often. Imported private keys are stored unencrypted in the data directory.
+
+| Operation | Description                                          | Key Parameters                                 |
+| --------- | ---------------------------------------------------- | ---------------------------------------------- |
+| `add`     | Save an account reference (no key)                   | `accountId`, `alias`, `nickname`               |
+| `import`  | Save an account **with** its private key for signing | `accountId`, `alias`, `privateKey`, `nickname` |
+| `list`    | List all saved accounts                              | -                                              |
+| `update`  | Change an entry's nickname                           | `alias`, `nickname`                            |
+| `remove`  | Remove an entry                                      | `alias`                                        |
+
+---
+
+## State Management (1 tool, 3 operations)
+
+### state_manage
+
+Backup, restore and export of the address book and network state. Files live under the data directory (`~/.hedera-mcp` or `HASHPILOT_DATA_DIR`).
+
+| Operation | Description                                                                                        | Key Parameters                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `backup`  | Write a timestamped backup to `backups/` (private keys excluded unless `includePrivateKeys: true`) | `outputPath` (optional), `includePrivateKeys`                                                           |
+| `restore` | Restore from a backup file, replacing or merging                                                   | `backupPath` (required), `merge`                                                                        |
+| `export`  | Export state as JSON to `exports/`                                                                 | `outputPath` (optional), `format` (`json`, `compact`, `pretty`; default `pretty`), `includePrivateKeys` |
 
 ---
 
 ## JSON-RPC Operations (4 tools)
 
-### rpc_call
-Execute ANY of 55+ JSON-RPC methods on Hedera's relay.
-- **method** (string, required): eth_blockNumber, eth_getBalance, eth_call, eth_getLogs, etc.
-- **params** (array): Method parameters
-- **network** (string): Target network
+These tools talk to the JSON-RPC relay for the active network (Hashio by default, or your `JSON_RPC_RELAY_URL`). Chain IDs are 295 (mainnet), 296 (testnet), 297 (previewnet) and 298 (local).
 
-**Supported methods include:** eth_blockNumber, eth_getBalance, eth_getTransactionCount, eth_getCode, eth_call, eth_estimateGas, eth_sendRawTransaction, eth_getTransactionByHash, eth_getTransactionReceipt, eth_getLogs, eth_getBlockByNumber, eth_getBlockByHash, eth_chainId, eth_gasPrice, eth_feeHistory, web3_clientVersion, net_version, and 40+ more.
+### rpc_call
+
+Execute any method the relay supports (`eth_*`, `web3_*`, `net_*`, `debug_*`). Read methods are **FREE**.
+
+- **method** (string, required): e.g. `eth_blockNumber`, `eth_getBalance`, `eth_call`, `eth_getLogs`, `eth_sendRawTransaction`
+- **params** (array): Method parameters
+- **network** (string): `mainnet`, `testnet`, `previewnet` or `local` (default: active network)
+
+Results are decoded to human-readable values where possible (chain IDs, balances, block numbers).
 
 ### rpc_call_contract
-Call read-only contract function. **FREE - no gas cost.**
-- **contractAddress** (string, required): 0x address
+
+Call a view or pure function via `eth_call`. **FREE, no gas.**
+
+- **contractAddress** (string, required): `0x` address
 - **abi** (array, required): Contract ABI
 - **functionName** (string, required): Function to call
 - **args** (array): Function arguments
 
 ### rpc_deploy_contract
-Deploy contract via JSON-RPC.
-- **bytecode** (string, required): Contract bytecode
-- **abi** (array, required): Contract ABI
+
+Deploy bytecode via the relay. Handles constructor encoding, gas estimation and receipt polling.
+
+- **bytecode** (string, required): Contract bytecode (`0x...`)
+- **abi** (array): Contract ABI (needed to encode constructor arguments)
 - **constructorArgs** (array): Constructor arguments
-- **gasLimit** (number): Gas limit
-- **privateKey** (string): Deployer key (auto-uses operator)
+- **privateKey** (string): Deployer key (optional, defaults to the operator key)
 
 ### rpc_execute_contract
-Execute state-changing contract function.
+
+Send a state-changing transaction via `eth_sendRawTransaction`.
+
 - **contractAddress** (string, required): Contract address
 - **abi** (array, required): Contract ABI
 - **functionName** (string, required): Function name
 - **args** (array): Function arguments
-- **value** (string): HBAR to send
-- **privateKey** (string): Caller key (auto-uses operator)
+- **value** (string): Value to send, in wei
+- **privateKey** (string): Sender key (optional, defaults to the operator key)
+
+<Note>
+  EVM operations sign with an ECDSA key. If your operator account uses an ED25519 key, pass an ECDSA
+  `privateKey` for these tools, or use the native SDK tools instead.
+</Note>
 
 ---
 
-## RAG & Code Generation (3 tools)
+## Documentation and Code Generation (4 tools)
+
+With `OPENAI_API_KEY` set, all four query the ChromaDB index at `CHROMA_URL` (HashPilot's hosted index by default), which covers docs.hedera.com, HIPs, HCS standards, protobuf definitions, SDK examples in five languages and the Solo, CLI, Mirror Node, Agent Kit and smart-contract repositories. They cost OpenAI tokens, never HBAR.
+
+Without a key, or when the index cannot be reached, they answer from Hedera's official documentation search at `docs.hedera.com/mcp` instead: free and keyless, but limited to docs.hedera.com and hips.hedera.com. `docs_ask` then returns the relevant documentation rather than a written answer, and `code_generate` returns the documentation to write the code from. Every fallback response says so and why.
 
 ### docs_search
-Semantic search across 10,000+ indexed Hedera documents.
-- **query** (string, required): Search query
-- **limit** (number): Results (1-20, default: 5)
-- **contentType** (string): tutorial, api, concept, example, guide, reference
-- **language** (string): Filter by language
-- **hasCode** (boolean): Filter for code examples
+
+Semantic search across the indexed Hedera documentation, SDK references, tutorials and HIPs.
+
+- **query** (string, required): Natural-language search query
+- **limit** (number): Max results (default 5, max 20)
+- **contentType** (string): `tutorial`, `api`, `concept`, `example`, `guide` or `reference`
+- **language** (string): `javascript`, `typescript`, `java`, `python`, `go` or `solidity`
+- **hasCode** (boolean): Only return chunks that contain code
 
 ### docs_ask
-Answer questions with RAG and citations.
+
+Answer a question with retrieval-augmented generation and source citations.
+
 - **question** (string, required): Your question
-- **expertiseLevel** (string): beginner, intermediate, advanced
-- **includeCodeExamples** (boolean): Include code
-- **language** (string): Preferred code language
+- **expertiseLevel** (string): `beginner`, `intermediate` or `advanced`
+- **includeCodeExamples** (boolean): Include code in the answer
+- **language** (string): Preferred language for examples (same list as `docs_search`)
+
+### docs_get_example
+
+Find working code examples with explanations and source references.
+
+- **description** (string, required): What the code should do
+- **language** (string): `javascript`, `typescript`, `java`, `python`, `go`, `rust` or `solidity`
+- **complexity** (string): `simple`, `intermediate` or `advanced`
+- **limit** (number): Max examples (default 5)
 
 ### code_generate
-Generate SDK code from natural language.
+
+Generate runnable SDK code from a description, grounded in indexed examples.
+
 - **description** (string, required): What to generate
-- **language** (string): js, ts, java, python, go, rust, solidity
-- **style** (string): minimal, complete, production
-- **includeImports** (boolean): Include imports
-- **includeErrorHandling** (boolean): Include try/catch
+- **language** (string): `javascript` (default), `typescript`, `java`, `python`, `go` or `solidity`
+- **style** (string): `minimal`, `complete` (default) or `production`
+- **includeImports** (boolean): Include imports (default true)
+- **includeErrorHandling** (boolean): Include try/catch (default true)
 
 ---
 
 ## Smart Contract Deployment (4 tools)
 
 ### deploy_contract
-Unified contract deployment.
+
+Unified deployment. Detects a Hardhat or Foundry project in the current directory, or falls back to direct RPC deployment, and records the result in the deployment history.
+
 - **contractName** (string, required): Contract name
-- **network** (string, required): mainnet, testnet, previewnet
+- **network** (string, required): `mainnet`, `testnet` or `previewnet`
 - **constructorArgs** (array): Constructor arguments
-- **framework** (string): hardhat, foundry, direct
-- **verify** (boolean): Auto-verify after deploy
-- **gasLimit** (number): Gas limit
-- **privateKey** (string): Deployer key (auto-uses operator)
+- **framework** (string): `hardhat`, `foundry` or `direct` (auto-detected if omitted)
+- **verify** (boolean): Attempt verification after deployment
 
 ### verify_contract
-Verify contract on HashScan.
-- **address** (string, required): Contract address
-- **network** (string, required): Network
+
+Submit source code for verification. HashScan reads verification status from [Sourcify](https://sourcify.dev), which supports Hedera mainnet (chain 295) and testnet (chain 296) only.
+
+- **address** (string, required): Contract address (`0x...`)
+- **network** (string, required): `mainnet` or `testnet` (`previewnet` is accepted by the schema but cannot be verified)
 - **contractName** (string, required): Contract name
-- **filePath** (string): Source file path
-- **creatorTxHash** (string): Creation transaction hash
+- **filePath** (string, required): Path to the `.sol` file or a directory of `.sol` files
+
+Returns the match status and the HashScan URL.
 
 ### deployment_history
-View deployment history.
-- **network** (string): Filter by network
-- **contractName** (string): Filter by contract
-- **limit** (number): Max results
-- **exportFormat** (string): json, csv, markdown
+
+List past deployments. **FREE.**
+
+- **network** (string): `mainnet`, `testnet` or `previewnet`
+- **contractName** (string): Filter by name
+- **limit** (number): Max results (default 20)
+- **exportFormat** (string): `json`, `csv` or `markdown`
+
+History is stored in `deployments.json` in the data directory.
 
 ### mirror_query_account
-Query account from Mirror Node. **FREE.**
+
+Query an account from the Mirror Node REST API, optionally with recent transactions. **FREE.**
+
 - **accountId** (string, required): Account ID
-- **includeTransactions** (boolean): Include transactions
-- **transactionLimit** (number): Transaction limit
+- **includeTransactions** (boolean): Include recent transactions
+- **transactionLimit** (number): Transaction count (default 20)
+
+### mirror_query
+
+Every other read-only Mirror Node query, selected by **resource**. **FREE**, no operator needed. Each resource takes the parameters shown; the tool reports any required one that is missing.
+
+| Resource                                              | Returns                                                                                                    | Required                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `account`, `accounts`                                 | Account details; list of accounts                                                                          | `accountId` for `account`                                  |
+| `account_tokens`, `account_nfts`, `account_rewards`   | Token relationships, owned NFTs, staking rewards                                                           | `accountId`                                                |
+| `balances`                                            | Balance snapshots                                                                                          | -                                                          |
+| `transactions`                                        | Recent transactions, filterable by `accountId`, `transactionType`, `result`, `timestamp`                   | -                                                          |
+| `transaction`                                         | One transaction: status, fee, transfers                                                                    | `transactionId`                                            |
+| `token`, `tokens`                                     | Token info (supply, keys, fees, treasury); list of tokens                                                  | `tokenId` for `token`                                      |
+| `token_balances`                                      | Holders of a token                                                                                         | `tokenId`                                                  |
+| `nfts`, `nft`, `nft_history`                          | NFTs of a collection; one NFT; its transfer history                                                        | `tokenId`, plus `serialNumber` for `nft` and `nft_history` |
+| `topic`, `topic_messages`                             | Topic info; its messages                                                                                   | `topicId`                                                  |
+| `contracts`, `contract`                               | List of contracts; one contract with bytecode                                                              | `contractId` for `contract`                                |
+| `contract_state`, `contract_results`, `contract_logs` | Storage slots, execution results, event logs                                                               | `contractId`                                               |
+| `contract_call`                                       | Free read-only call or gas estimate (`eth_call` simulation)                                                | `to`, `data`                                               |
+| `contract_actions`, `contract_opcodes`                | Internal calls; opcode trace (first 500 steps, stack omitted)                                              | `transactionIdOrHash`                                      |
+| `logs`                                                | Event logs across contracts by topic; `timestamp` as `gte:<s>,lte:<s>` under 7 days, default last 24 hours | -                                                          |
+| `schedules`, `schedule`                               | Scheduled transactions; one with its signatures                                                            | `scheduleId` for `schedule`                                |
+| `network_info`                                        | Live fee-conversion exchange rate, fee schedule, supply                                                    | -                                                          |
+| `network_nodes`, `network_stake`                      | Consensus nodes; staking parameters                                                                        | -                                                          |
+| `blocks`, `block`                                     | Recent blocks; one block                                                                                   | `hashOrNumber` for `block`                                 |
+
+### graphql
+
+Query indexed Hedera Mirror Node data with GraphQL, through [Hgraph](https://hgraph.com). Hedera's public Mirror Nodes offer only REST; Hgraph serves the same data over GraphQL for mainnet and testnet. Needs `HGRAPH_API_KEY` (a free key is available at [app.hgraph.com](https://app.hgraph.com)); set `GRAPHQL_ENDPOINT` to use a different endpoint. **Read-only**: mutations and subscriptions are refused.
+
+| Operation  | Description                                                                                                                         | Key Parameters                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `schema`   | List queryable entities, or the fields and filter arguments of one                                                                  | `search`, `entity`, `refreshSchema`                                               |
+| `generate` | Build a query for an entity from the schema, with filters passed as typed variables, and validate it; add `execute: true` to run it | `entity`, `fields`, `where`, `orderBy`, `limit` (default 10), `offset`, `execute` |
+| `validate` | Check a hand-written query against the schema without running it; problems come back with line and column                           | `query`                                                                           |
+| `execute`  | Run a read-only query                                                                                                               | `query`, `variables`                                                              |
+
+Filters use Hasura syntax, for example `where: {"type": {"_eq": "NON_FUNGIBLE_UNIQUE"}}` and `orderBy: {"consensus_timestamp": "desc"}`. The schema is cached per network in the data directory for a day. Large results are trimmed to fit a response, with a note saying how many rows were left out. The free Hgraph plan allows one request per second.
 
 ---
 
 ## Hardhat Integration (2 tools, 15 operations)
 
-### hardhat_project
-Project-level Hardhat operations.
+Both tools take **directory** (string): the absolute path of the Hardhat project. It is required for every operation except `init`, which creates the directory.
 
-| Operation | Description |
-|-----------|-------------|
-| `init` | Initialize new Hardhat project with Hedera config |
-| `compile` | Compile Solidity contracts |
-| `test` | Run Mocha/Chai tests with filtering |
-| `clean` | Clean artifacts and cache |
-| `flatten` | Flatten contracts for verification |
-| `get_artifacts` | Get compiled ABI and bytecode |
-| `get_accounts` | List accounts with balances |
-| `config_network` | Generate network config snippet |
-| `run_task` | Execute custom Hardhat task |
-| `list_tasks` | List all available tasks |
+### hardhat_project
+
+| Operation        | Description                                                                                                                                                                          | Key Parameters                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`           | Scaffold a project with a Hedera-ready config, `contracts/Greeter.sol`, `scripts/deploy.js`, `test/Greeter.test.js`, `.env.example`; installs Hardhat 3 and the mocha-ethers toolbox | `directory`, `networks` (array of `mainnet`/`testnet`/`previewnet`/`local`, default testnet and local), `solidity` (default 0.8.20), `typescript` |
+| `compile`        | Compile contracts                                                                                                                                                                    | `force`                                                                                                                                           |
+| `test`           | Run Mocha/Chai tests                                                                                                                                                                 | `testFiles`, `grep`, `network`                                                                                                                    |
+| `clean`          | Remove artifacts and cache                                                                                                                                                           | -                                                                                                                                                 |
+| `flatten`        | Flatten a contract for manual verification                                                                                                                                           | `contractPath`                                                                                                                                    |
+| `get_artifacts`  | Return compiled ABI and bytecode (all contracts when `contractName` is omitted)                                                                                                      | `contractName`                                                                                                                                    |
+| `get_accounts`   | List configured accounts with balances                                                                                                                                               | -                                                                                                                                                 |
+| `config_network` | Return a network config snippet                                                                                                                                                      | `network`                                                                                                                                         |
+| `run_task`       | Run a custom Hardhat task                                                                                                                                                            | `task`, `params`                                                                                                                                  |
+| `list_tasks`     | List available tasks                                                                                                                                                                 | -                                                                                                                                                 |
 
 ### hardhat_contract
-Contract-level Hardhat operations.
 
-| Operation | Description |
-|-----------|-------------|
-| `deploy` | Deploy via deployment script |
-| `deploy_ignition` | Deploy using Hardhat Ignition |
-| `verify` | Get verification metadata |
-| `call` | Call read-only function (**FREE**) |
-| `execute` | Execute state-changing transaction |
+Deployment uses the operator key automatically; you do not need to set `TESTNET_PRIVATE_KEY` yourself.
+
+| Operation         | Description                                                              | Key Parameters                                                                           |
+| ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `deploy`          | Run a deployment script                                                  | `script`, `network`                                                                      |
+| `deploy_ignition` | Deploy a Hardhat Ignition module                                         | `module`, `network`                                                                      |
+| `verify`          | Locate the build-info file and return Sourcify verification instructions | `address`, `constructorArgs`                                                             |
+| `call`            | Call a read-only function (**FREE**)                                     | `contractAddress`, `abi`, `method`, `methodArgs`                                         |
+| `execute`         | Send a state-changing transaction                                        | `contractAddress`, `abi`, `method`, `methodArgs`, `value` (wei), `privateKey` (optional) |
 
 ---
 
 ## Foundry Integration (2 tools, 17 operations)
 
-### foundry_project
-Project-level Foundry operations.
+Requires `forge`, `cast` and `anvil` on your `PATH` (HashPilot also looks in `~/.foundry/bin`). Both tools take **directory** (string), required for every operation except `init`.
 
-| Operation | Description |
-|-----------|-------------|
-| `init` | Initialize new Foundry project |
-| `install` | Install git dependency (e.g., forge-std) |
-| `update` | Update all dependencies |
-| `remove` | Remove a dependency |
-| `clean` | Clean build artifacts |
-| `build` | Compile with optimization options |
-| `fmt` | Format Solidity code |
-| `inspect` | Inspect contract (ABI, bytecode, storage) |
-| `get_artifacts` | Get compiled artifacts |
-| `snapshot` | Create gas usage snapshot |
+### foundry_project
+
+| Operation       | Description                                                                                                                                                                                              | Key Parameters                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `init`          | Scaffold a project: `foundry.toml` with Hedera RPC endpoints, `src/Greeter.sol`, `test/Greeter.t.sol`, `script/Deploy.s.sol`, `remappings.txt`; runs `git init` and `forge install foundry-rs/forge-std` | `directory`, `template`                                                   |
+| `install`       | Install a dependency as a git submodule                                                                                                                                                                  | `dependency` (e.g. `OpenZeppelin/openzeppelin-contracts`)                 |
+| `update`        | Update all dependencies                                                                                                                                                                                  | -                                                                         |
+| `remove`        | Remove a dependency                                                                                                                                                                                      | `dependency`                                                              |
+| `clean`         | Remove build artifacts                                                                                                                                                                                   | -                                                                         |
+| `build`         | Compile                                                                                                                                                                                                  | `optimize`, `optimizerRuns`, `viaIr`                                      |
+| `fmt`           | Format Solidity sources                                                                                                                                                                                  | -                                                                         |
+| `inspect`       | Inspect an artifact                                                                                                                                                                                      | `contractName`, `field` (`abi`, `bytecode`, `assembly`, `storage-layout`) |
+| `get_artifacts` | Read `out/<Source>.sol/<Contract>.json`                                                                                                                                                                  | `contractName`                                                            |
+| `snapshot`      | Create a gas snapshot                                                                                                                                                                                    | -                                                                         |
 
 ### foundry_contract
-Contract-level Foundry operations.
 
-| Operation | Description |
-|-----------|-------------|
-| `test` | Run tests with fuzzing and gas reports |
-| `create` | Deploy via forge create |
-| `script` | Execute Solidity deployment script |
-| `call` | Call read-only function via cast (**FREE**) |
-| `send` | Send transaction via cast |
-| `anvil_start` | Start local Anvil node (can fork) |
-| `anvil_stop` | Stop Anvil node |
+`rpcUrl` and `privateKey` are optional everywhere: they default to the active network's relay and the operator key.
+
+| Operation     | Description                                            | Key Parameters                                                                         |
+| ------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `test`        | Run `forge test`, with fuzzing and optional gas report | `matchTest`, `matchContract`, `gasReport`, `forkUrl`, `verbosity` (1-5)                |
+| `create`      | Deploy one contract with `forge create`                | `contractName` (as `src/File.sol:Contract`), `constructorArgs`, `rpcUrl`, `privateKey` |
+| `script`      | Run a Solidity script, optionally broadcasting         | `scriptPath`, `broadcast`, `rpcUrl`, `privateKey`                                      |
+| `call`        | Read-only call via `cast call` (**FREE**)              | `address`, `signature` (e.g. `greet()(string)`), `callArgs`, `rpcUrl`                  |
+| `send`        | Transaction via `cast send`                            | `address`, `signature`, `callArgs`, `value`, `rpcUrl`, `privateKey`                    |
+| `anvil_start` | Start a local Anvil node, optionally forking a network | `port`, `forkUrl`, `forkBlock`                                                         |
+| `anvil_stop`  | Stop the Anvil node                                    | -                                                                                      |
 
 ---
 
 ## Stablecoin Studio (1 tool, 18 operations)
 
 ### stablecoin_manage
-Enterprise-grade stablecoin management via Hedera Stablecoin Studio.
 
-| Operation | Description |
-|-----------|-------------|
-| `create` | Create compliant stablecoin with role-based controls |
-| `info` | Get stablecoin details |
-| `balance` | Check account balance |
-| `cashin` | Mint tokens (requires CASHIN role) |
-| `burn` | Burn tokens (requires BURN role) |
-| `wipe` | Remove tokens from account (requires WIPE role) |
-| `rescue` | Rescue tokens from proxy treasury |
-| `rescue_hbar` | Rescue HBAR from proxy |
-| `freeze` | Freeze account |
-| `unfreeze` | Unfreeze account |
-| `pause` | Pause all operations globally |
-| `unpause` | Resume operations |
-| `kyc_grant` | Grant KYC status |
-| `kyc_revoke` | Revoke KYC status |
-| `role_grant` | Grant role to account |
-| `role_revoke` | Revoke role from account |
-| `role_check` | Check account's roles |
-| `delete` | Permanently delete stablecoin |
+Compliant stablecoins through the [Hedera Stablecoin Studio](https://github.com/hashgraph/stablecoin-studio) SDK. Built-in factory and resolver contracts exist for **testnet only**; mainnet and previewnet need `STABLECOIN_FACTORY_ADDRESS` and `STABLECOIN_RESOLVER_ADDRESS` (and optionally `STABLECOIN_CONFIG_ID` / `STABLECOIN_CONFIG_VERSION`) in the environment.
 
-**Available roles:** CASHIN, BURN, WIPE, RESCUE, PAUSE, FREEZE, KYC, DELETE
+| Operation                                   | Description                                             |
+| ------------------------------------------- | ------------------------------------------------------- |
+| `create`                                    | Create a stablecoin with role-based controls            |
+| `info`                                      | Get stablecoin details (supply, treasury, pause status) |
+| `balance`                                   | Check an account's balance                              |
+| `cashin`                                    | Mint tokens to an account (CASHIN role)                 |
+| `burn`                                      | Burn tokens from the treasury (BURN role)               |
+| `wipe`                                      | Remove tokens from an account (WIPE role)               |
+| `rescue`                                    | Rescue tokens from the proxy treasury (RESCUE role)     |
+| `rescue_hbar`                               | Rescue HBAR from the proxy (RESCUE role)                |
+| `freeze` / `unfreeze`                       | Control an account's ability to transfer (FREEZE role)  |
+| `pause` / `unpause`                         | Halt or resume all operations (PAUSE role)              |
+| `kyc_grant` / `kyc_revoke`                  | Manage KYC status (KYC role)                            |
+| `role_grant` / `role_revoke` / `role_check` | Manage role assignments                                 |
+| `delete`                                    | Permanently delete the stablecoin (DELETE role)         |
+
+**Parameters:** `stablecoinId` (most operations), `targetAccount`, `amount` (string, for exact decimals), `role` (`CASHIN`, `BURN`, `WIPE`, `RESCUE`, `PAUSE`, `FREEZE`, `KYC`, `DELETE`), `network`.
+
+**Create parameters:** `name`, `symbol`, `decimals` (default 6), `initialSupply`, `maxSupply`, `supplyType` (`INFINITE` or `FINITE`), `memo`, `freezeDefault`, role accounts (`cashInRoleAccount`, `burnRoleAccount`, `wipeRoleAccount`, `rescueRoleAccount`, `pauseRoleAccount`, `freezeRoleAccount`, `kycRoleAccount`, `deleteRoleAccount`; each defaults to the operator), `cashInAllowance`, `createReserve`, `reserveInitialAmount`, `reserveAddress`, `proxyAdminOwnerAccount`.
 
 ---
 
-## Utility Tools (4 tools)
+## Error Analysis (1 tool)
 
 ### error_explain
-Explain Hedera error codes with debugging guidance.
-- **errorCode** (string): Error code (e.g., INSUFFICIENT_PAYER_BALANCE)
-- **errorMessage** (string): Full error message
-- **category** (string): account, token, contract, consensus, network, transaction, key, file
+
+Look up Hedera error codes with cause, solution and related errors. **FREE**, works offline, no OpenAI key needed. Call it with any one of:
+
+- **errorCode** (string): e.g. `INSUFFICIENT_PAYER_BALANCE`
+- **errorMessage** (string): A full error message; the code is extracted automatically
+- **category** (string): List all errors in `account`, `token`, `contract`, `consensus`, `network`, `transaction`, `key` or `file`
 - **search** (string): Search by keyword
 
-### state_manage
-Server state persistence and backup.
+---
 
-| Operation | Description |
-|-----------|-------------|
-| `backup` | Create timestamped backup |
-| `restore` | Restore from backup (merge or replace) |
-| `export` | Export state to JSON |
+## Environment Variables
+
+| Variable                                                                                                         | Used by                          | Description                                                         |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- |
+| `HEDERA_NETWORK`                                                                                                 | all                              | `testnet`, `mainnet`, `previewnet` or `local`                       |
+| `HEDERA_OPERATOR_ID`                                                                                             | transaction tools                | Operator account ID                                                 |
+| `HEDERA_OPERATOR_KEY`                                                                                            | transaction tools                | Operator private key, DER or raw hex                                |
+| `HEDERA_OPERATOR_KEY_TYPE`                                                                                       | startup                          | `ecdsa` (default for raw hex) or `ed25519`                          |
+| `OPENAI_API_KEY`                                                                                                 | docs tools                       | Embeddings and completions                                          |
+| `CHROMA_URL`, `CHROMA_AUTH_TOKEN`                                                                                | docs tools                       | Your own ChromaDB index instead of the hosted one                   |
+| `JSON_RPC_RELAY_URL`                                                                                             | RPC, Hardhat, Foundry, deploy    | Production relay for `HEDERA_NETWORK`                               |
+| `MIRROR_NODE_URL`                                                                                                | account, HCS query, mirror tools | Alternative Mirror Node for `HEDERA_NETWORK`                        |
+| `HASHPILOT_DATA_DIR`                                                                                             | address book, state, history     | Data directory (default `~/.hedera-mcp`)                            |
+| `STABLECOIN_FACTORY_ADDRESS`, `STABLECOIN_RESOLVER_ADDRESS`, `STABLECOIN_CONFIG_ID`, `STABLECOIN_CONFIG_VERSION` | `stablecoin_manage`              | Stablecoin Studio contracts for networks without built-in addresses |
 
 ---
 
 ## Auto-Key Resolution
 
-All deployment and transaction tools automatically use your configured operator account. You don't need to specify private keys unless you want to use a different account.
+Transaction tools sign with the operator key unless told otherwise:
 
-**Resolution order:**
-1. Explicitly provided `privateKey` parameter
-2. Address book entry (if `fromAlias` specified)
-3. MCP operator account (default from config)
+1. An explicit `privateKey` parameter (RPC, Hardhat `execute`, Foundry `create`/`script`/`send`)
+2. The operator account from your MCP configuration
+
+For Hardhat deployments the operator key is injected as the `<NETWORK>_PRIVATE_KEY` variable the generated config expects. Foundry tools fill in `rpcUrl` from the active network as well.
 
 ---
 
 <Note>
-Remember: You don't need to call these tools directly. Just tell your AI assistant what you want to do, like "Create a token called MyToken" or "Deploy my contract to testnet", and HashPilot handles the rest.
+  Remember: You don't need to call these tools directly. Just tell your AI assistant what you want
+  to do, like "Create a token called MyToken" or "Deploy my contract to testnet", and HashPilot
+  handles the rest. The [Tutorials](/tutorials) show complete workflows.
 </Note>

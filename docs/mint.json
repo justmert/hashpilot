@@ -45,6 +45,9 @@
         "installation",
         "features",
         "tools",
+        "tutorials",
+        "best-practices",
+        "self-hosting",
         "troubleshooting"
       ]
     }

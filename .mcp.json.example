@@ -1,12 +1,13 @@
 {
+  "_comment": "Example MCP server entry for HashPilot. Claude Desktop, Cursor, Windsurf and Gemini CLI use this `mcpServers` shape; VS Code uses `servers` with an added \"type\": \"stdio\". Copy the hashpilot entry into your client's config file (see https://hash-pilot.app/installation) and replace the placeholder values.",
   "mcpServers": {
     "hashpilot": {
-      "command": "node",
-      "args": ["/path/to/hedera-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "hashpilot"],
       "env": {
         "HEDERA_NETWORK": "testnet",
         "HEDERA_OPERATOR_ID": "0.0.YOUR_ACCOUNT_ID",
-        "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_HEX",
+        "HEDERA_OPERATOR_KEY": "YOUR_PRIVATE_KEY_DER_OR_RAW_HEX",
         "OPENAI_API_KEY": "sk-proj-YOUR_OPENAI_API_KEY"
       }
     }
