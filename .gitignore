@@ -61,3 +61,5 @@ temp/
 Thumbs.db
 .DS_Store
 addressbook.json
+# Written by npm run index-all
+RAG_COVERAGE_REPORT.md

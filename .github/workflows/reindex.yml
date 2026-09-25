@@ -1,0 +1,75 @@
+name: Weekly re-index
+
+# Keeps the hosted documentation index current: re-indexes every source, then
+# prunes chunks for pages that were deleted or renamed upstream. Fails loudly
+# (and GitHub emails the repository owner) if any source fails or pruning looks
+# unsafe, and nothing is deleted in that case.
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Sundays 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: 'What to do with chunks this run did not rewrite'
+        type: choice
+        options: [prune, dry-run, keep]
+        default: prune
+
+concurrency:
+  group: reindex
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reindex:
+    name: Re-index documentation
+    if: github.repository == 'justmert/hashpilot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CHROMA_AUTH_TOKEN: ${{ secrets.CHROMA_ADMIN_TOKEN }}
+      # Unset uses the hosted index
+      CHROMA_URL: ${{ vars.CHROMA_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check credentials
+        run: |
+          if [ -z "$OPENAI_API_KEY" ] || [ -z "$CHROMA_AUTH_TOKEN" ]; then
+            echo "::error::Set the OPENAI_API_KEY and CHROMA_ADMIN_TOKEN repository secrets."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      - name: Index and prune
+        run: |
+          case "${{ inputs.prune || 'prune' }}" in
+            dry-run) npm run index-all -- --dry-run-prune ;;
+            keep)    npm run index-all -- --no-prune ;;
+            *)       npm run index-all ;;
+          esac
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f RAG_COVERAGE_REPORT.md ]; then
+            { echo '```'; sed -n '1,40p' RAG_COVERAGE_REPORT.md; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-report
+          path: RAG_COVERAGE_REPORT.md
+          if-no-files-found: ignore
+          retention-days: 90

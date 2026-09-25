@@ -10,6 +10,17 @@ import { Chunk, SearchResult, SearchFilters, CollectionConfig } from '../types/r
 import { INDEXING_CONFIG } from '../config/rag.js';
 import { logger } from '../utils/logger.js';
 import { stripLoneSurrogates } from '../utils/text.js';
+import { appendFileSync } from 'fs';
+
+/**
+ * When HASHPILOT_INDEX_MANIFEST names a file, append each written chunk id to
+ * it as "<collection>\t<id>". `index-all` sets it for its child indexers.
+ */
+function recordWrittenIds(ids: string[], collection: string): void {
+  const manifest = process.env.HASHPILOT_INDEX_MANIFEST;
+  if (!manifest || ids.length === 0) return;
+  appendFileSync(manifest, ids.map((id) => `${collection}\t${id}`).join('\n') + '\n');
+}
 
 /**
  * ChromaDB connection configuration
@@ -262,6 +273,10 @@ export class ChromaDBService {
           embeddings,
         });
 
+        // A full re-index records every id it wrote, so chunks it did not
+        // rewrite (pages deleted or renamed upstream) can be pruned afterwards.
+        recordWrittenIds(ids, collection.name);
+
         logger.info('Batch inserted to collection', {
           collection: collection.name,
           batch: `${batchNumber}/${totalBatches}`,
@@ -475,6 +490,20 @@ export class ChromaDBService {
     }
 
     return true;
+  }
+
+  /**
+   * Every chunk id in a collection, read a page at a time
+   */
+  async listIds(collectionName?: string, pageSize = 1000): Promise<string[]> {
+    const collection = await this.getDefaultCollection(collectionName);
+    const ids: string[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await collection.get({ limit: pageSize, offset, include: [] as any });
+      ids.push(...page.ids);
+      if (page.ids.length < pageSize) break;
+    }
+    return ids;
   }
 
   /**

@@ -100,7 +100,10 @@ evidence behind each entry.
   - `npm run smoke` runs read-only checks against the live network.
   - `npm run check:sources` and `npm run check:sourcify` check the index
     sources and contract verification against live services.
-  - GitHub Actions: CI, plus a scheduled canary check.
+  - GitHub Actions: CI, a scheduled canary check, and a weekly re-index of the
+    documentation that also removes pages deleted or renamed upstream.
+  - `npm run index-all` fails when any indexer fails (it used to report
+    success), and no longer requires Firecrawl.
   - Deployment files for hosting the documentation index on Railway.
 
 ### Changed

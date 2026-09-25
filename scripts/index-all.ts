@@ -9,14 +9,25 @@
  * - Tutorials and smart contract examples
  *
  * Target: 95%+ coverage of Hedera ecosystem documentation.
+ *
+ * After every indexer succeeds, chunks the run did not write (pages deleted or
+ * renamed upstream) are pruned, within a safety limit. Exits non-zero if any
+ * indexer fails or pruning is refused, so a scheduled run cannot fail silently.
+ *
+ *   npm run index-all                      # index and prune
+ *   npm run index-all -- --dry-run-prune   # index, report what would be pruned
+ *   npm run index-all -- --no-prune        # index only
  */
 
 import { config as loadEnv } from 'dotenv';
 import { ChromaDBService } from '../src/services/chromadb-service.js';
 import { EmbeddingService } from '../src/services/embedding-service.js';
-import { FirecrawlService } from '../src/services/firecrawl-service.js';
-import { createRAGConfig } from '../src/config/rag.js';
+import { CHROMA_COLLECTIONS, createRAGConfig } from '../src/config/rag.js';
+import { planPrune, readManifest } from '../src/utils/index-prune.js';
 import { execSync } from 'child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 
 // Load environment variables
 loadEnv();
@@ -51,7 +62,8 @@ async function runIndexer(name: string, script: string): Promise<IndexerResult> 
     const output = execSync(`npm run ${script}`, {
       encoding: 'utf-8',
       stdio: 'inherit',
-      timeout: 600000, // 10 minute timeout
+      // The SDK indexer walks five repositories; ten minutes was not always enough
+      timeout: 30 * 60 * 1000,
     });
 
     const duration = (Date.now() - startTime) / 1000;
@@ -141,33 +153,17 @@ async function runPreflightChecks(): Promise<boolean> {
     allPassed = false;
   }
 
-  // 3. Test Firecrawl
-  console.log('\n3️⃣  Testing Firecrawl connection...');
+  // 3. Test GitHub API access (directory listings for the SDK, HIP and tutorial repos)
+  console.log('\n3️⃣  Testing GitHub API access...');
   try {
-    const firecrawlConfig = ragConfig.firecrawlUrl || ragConfig.firecrawlApiKey;
-    if (!firecrawlConfig) {
-      throw new Error('FIRECRAWL_URL or FIRECRAWL_API_KEY not set');
-    }
-    const firecrawlService = new FirecrawlService(firecrawlConfig);
-    // Try a simple scrape of a small page
-    const testDoc = await firecrawlService.scrapePage('https://example.com');
-    if (testDoc && testDoc.content) {
-      console.log(`   ✅ Firecrawl working (scraped ${testDoc.content.length} chars)`);
-    } else {
-      throw new Error('Empty content returned');
-    }
-  } catch (error: any) {
-    console.error(`   ❌ Firecrawl failed: ${error.message}`);
-    allPassed = false;
-  }
-
-  // 4. Test GitHub API access (for SDK cloning)
-  console.log('\n4️⃣  Testing GitHub API access...');
-  try {
-    const response = await fetch('https://api.github.com/repos/hashgraph/hedera-sdk-js');
+    const response = await fetch('https://api.github.com/repos/hiero-ledger/hiero-sdk-js', {
+      headers: process.env.GITHUB_TOKEN
+        ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+        : {},
+    });
     if (response.ok) {
       const data = await response.json();
-      console.log(`   ✅ GitHub API accessible (hedera-sdk-js: ${data.stargazers_count} stars)`);
+      console.log(`   ✅ GitHub API accessible (hiero-sdk-js: ${data.stargazers_count} stars)`);
     } else {
       throw new Error(`GitHub API returned ${response.status}`);
     }
@@ -293,7 +289,7 @@ ${'='.repeat(70)}
 Based on indexed content:
 
 ✅ Official Documentation: 90%+
-   (docs.hedera.com content, minus REST API specs due to Firecrawl limits)
+   (docs.hedera.com, indexed from its source repository)
 
 ✅ SDK Coverage: 95%+
    (All 5 SDKs - JS, Java, Go, Python, Rust)
@@ -352,6 +348,17 @@ async function main() {
 
   const startTime = Date.now();
   const results: IndexerResult[] = [];
+  const prune = !process.argv.includes('--no-prune');
+  const dryRunPrune = process.argv.includes('--dry-run-prune');
+  const collection = process.env.RAG_COLLECTION || CHROMA_COLLECTIONS.all.name;
+
+  // Child indexers append every chunk id they write here (see ChromaDBService)
+  const manifestPath = path.join(
+    mkdtempSync(path.join(tmpdir(), 'hashpilot-index-')),
+    'written.tsv'
+  );
+  writeFileSync(manifestPath, '');
+  process.env.HASHPILOT_INDEX_MANIFEST = manifestPath;
 
   // Run preflight checks first
   const preflightPassed = await runPreflightChecks();
@@ -384,6 +391,19 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
+  const failed = results.filter((result) => !result.success);
+  let exitCode = 0;
+
+  if (failed.length > 0) {
+    // A failed source wrote nothing, so everything it owns would look stale
+    console.error(
+      `\n❌ ${failed.length} indexer(s) failed: ${failed.map((f) => f.name).join(', ')}. Skipping prune.`
+    );
+    exitCode = 1;
+  } else if (prune) {
+    exitCode = await pruneStaleChunks(manifestPath, collection, dryRunPrune);
+  }
+
   // Get final chunk count
   console.log('\n\n🔍 Checking final ChromaDB state...');
   const finalCount = await getChunkCount();
@@ -406,6 +426,61 @@ async function main() {
   const reportPath = './RAG_COVERAGE_REPORT.md';
   fs.writeFileSync(reportPath, reportText);
   console.log(`\n📄 Report saved to: ${reportPath}`);
+
+  process.exit(exitCode);
+}
+
+/**
+ * Delete chunks the run did not write. Returns the exit code: non-zero when
+ * the prune plan is refused, so a scheduled run surfaces it.
+ */
+async function pruneStaleChunks(
+  manifestPath: string,
+  collection: string,
+  dryRun: boolean
+): Promise<number> {
+  console.log(`\n🧹 Pruning chunks this run did not write (${collection})...`);
+
+  const ragConfig = createRAGConfig();
+  const chromaService = new ChromaDBService({
+    url: ragConfig.chromaUrl,
+    authToken: ragConfig.chromaAuthToken,
+    defaultCollection: collection,
+  });
+  await chromaService.initialize();
+
+  try {
+    const written = readManifest(readFileSync(manifestPath, 'utf-8'), collection);
+    const existing = await chromaService.listIds(collection);
+    const plan = planPrune(existing, written);
+
+    console.log(
+      `   Collection: ${plan.existing} chunks · written this run: ${plan.written} · stale: ${plan.stale.length}`
+    );
+
+    if (!plan.safe) {
+      console.error(`   ❌ Prune refused: ${plan.reason}. Nothing was deleted.`);
+      return 1;
+    }
+    if (plan.stale.length === 0) {
+      console.log('   ✅ Nothing stale.');
+      return 0;
+    }
+
+    console.log(`   Examples: ${plan.stale.slice(0, 5).join(', ')}`);
+    if (dryRun) {
+      console.log(`   (dry run) Would delete ${plan.stale.length} chunks.`);
+      return 0;
+    }
+
+    for (let i = 0; i < plan.stale.length; i += 100) {
+      await chromaService.deleteChunks(plan.stale.slice(i, i + 100), collection);
+    }
+    console.log(`   ✅ Deleted ${plan.stale.length} stale chunks.`);
+    return 0;
+  } finally {
+    await chromaService.close();
+  }
 }
 
 // Run

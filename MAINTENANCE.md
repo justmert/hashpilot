@@ -70,6 +70,30 @@ Roughly 30 to 60 minutes and a few cents of embeddings. Re-running is
 idempotent (chunks upsert by a deterministic id). `npm run index-docs-repo`
 alone refreshes just docs.hedera.com in about a minute.
 
+After every indexer succeeds, `index-all` deletes chunks the run did not write
+— pages deleted or renamed upstream, and the trailing chunks of pages that got
+shorter. `--dry-run-prune` reports them without deleting; `--no-prune` skips the
+step. Pruning is refused, and nothing is deleted, if any indexer failed or if
+more than 15% of the collection would go, since that pattern means a source came
+back empty rather than normal churn. `index-all` exits non-zero in either case.
+
+### Weekly re-index (GitHub Actions)
+
+`.github/workflows/reindex.yml` runs `index-all` every Sunday at 03:00 UTC and
+can be started by hand from the Actions tab, with a choice of prune, dry run or
+keep. It needs two repository secrets:
+
+| Secret               | Value                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`     | Any OpenAI key; embeddings use `text-embedding-3-small` at 512 dimensions, the model the index was built with |
+| `CHROMA_ADMIN_TOKEN` | The gateway's admin token (Railway variable on `chroma-gateway`)                                              |
+
+The optional repository variable `CHROMA_URL` points it at a different index.
+Each run costs about ten cents of embeddings, uploads the run report as an
+artifact kept for 90 days, and fails loudly if a source fails. GitHub disables
+scheduled workflows in a public repository after 60 days without a commit, so a
+long quiet spell needs the workflow re-enabled from the Actions tab.
+
 ## What changed on 2026-09-08 (Phase 0, shipped as 0.2.1)
 
 - [x] Operator key: detect DER vs raw hex, default raw hex to ECDSA, honour `HEDERA_OPERATOR_KEY_TYPE`, verify the derived public key against the Mirror Node on startup and refuse to run on a mismatch
