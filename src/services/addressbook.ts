@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from '../utils/logger.js';
+import { getDataDir, migrateLegacyFile } from '../utils/data-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,8 +28,9 @@ export class AddressBookService {
   private entries: Map<string, AddressBookEntry> = new Map();
 
   constructor() {
-    // Store addressbook in project root
-    this.addressBookPath = path.join(__dirname, '../../addressbook.json');
+    // Address book lives under ~/.hedera-mcp (or HASHPILOT_DATA_DIR), never
+    // inside the installed package, which is ephemeral under npx.
+    this.addressBookPath = path.join(getDataDir(), 'addressbook.json');
   }
 
   /**
@@ -36,9 +38,13 @@ export class AddressBookService {
    */
   async initialize(): Promise<void> {
     try {
+      await migrateLegacyFile(path.join(__dirname, '../../addressbook.json'), this.addressBookPath);
       const data = await fs.readFile(this.addressBookPath, 'utf-8');
       const entries: AddressBookEntry[] = JSON.parse(data);
 
+      // Reload replaces what is in memory; without this a restore would merge
+      // the restored entries into the ones already loaded.
+      this.entries.clear();
       entries.forEach((entry) => {
         this.entries.set(entry.alias, entry);
       });
@@ -61,6 +67,7 @@ export class AddressBookService {
   private async save(): Promise<void> {
     try {
       const entries = Array.from(this.entries.values());
+      await fs.mkdir(path.dirname(this.addressBookPath), { recursive: true });
       await fs.writeFile(this.addressBookPath, JSON.stringify(entries, null, 2), 'utf-8');
       logger.info('Address book saved', { count: entries.length });
     } catch (error) {
@@ -81,9 +88,7 @@ export class AddressBookService {
     // Check if account ID already exists
     for (const existing of this.entries.values()) {
       if (existing.accountId === entry.accountId) {
-        throw new Error(
-          `Account ${entry.accountId} already exists with alias "${existing.alias}"`
-        );
+        throw new Error(`Account ${entry.accountId} already exists with alias "${existing.alias}"`);
       }
     }
 
@@ -97,7 +102,10 @@ export class AddressBookService {
     this.entries.set(entry.alias, fullEntry);
     await this.save();
 
-    logger.info('Account added to address book', { alias: entry.alias, accountId: entry.accountId });
+    logger.info('Account added to address book', {
+      alias: entry.alias,
+      accountId: entry.accountId,
+    });
   }
 
   /**
@@ -127,6 +135,29 @@ export class AddressBookService {
   }
 
   /**
+   * Replace the entire address book, in memory and on disk.
+   *
+   * Used by state restore in replace mode. Restoring must not merge with what
+   * is already loaded, and must write to the configured data directory rather
+   * than any legacy in-package path.
+   */
+  async replaceAll(entries: AddressBookEntry[]): Promise<void> {
+    this.entries.clear();
+    for (const entry of entries) {
+      this.entries.set(entry.alias, entry);
+    }
+    await this.save();
+    logger.info('Address book replaced', { count: this.entries.size, path: this.addressBookPath });
+  }
+
+  /**
+   * Absolute path of the address book file (for diagnostics and backups)
+   */
+  getPath(): string {
+    return this.addressBookPath;
+  }
+
+  /**
    * Remove account by alias
    */
   async remove(alias: string): Promise<void> {
@@ -143,7 +174,10 @@ export class AddressBookService {
   /**
    * Update account entry
    */
-  async update(alias: string, updates: Partial<Omit<AddressBookEntry, 'alias' | 'accountId' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+  async update(
+    alias: string,
+    updates: Partial<Omit<AddressBookEntry, 'alias' | 'accountId' | 'createdAt' | 'updatedAt'>>
+  ): Promise<void> {
     const entry = this.entries.get(alias);
     if (!entry) {
       throw new Error(`Alias "${alias}" not found in address book`);

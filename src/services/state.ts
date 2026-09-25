@@ -8,6 +8,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from '../utils/logger.js';
 import { addressBook, AddressBookEntry } from './addressbook.js';
+import { getDataDir, migrateLegacyFile } from '../utils/data-dir.js';
+import { getPackageVersion } from '../utils/version.js';
+import { SUPPORTED_NETWORKS, isSupportedNetwork } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,9 +49,10 @@ export class StateService {
   private currentState: ServerState | null = null;
 
   constructor() {
-    // Store state in project root
-    this.statePath = path.join(__dirname, '../../state.json');
-    this.backupDir = path.join(__dirname, '../../backups');
+    // State lives under ~/.hedera-mcp (or HASHPILOT_DATA_DIR), never inside the
+    // installed package, which is ephemeral under npx.
+    this.statePath = path.join(getDataDir(), 'state.json');
+    this.backupDir = path.join(getDataDir(), 'backups');
   }
 
   /**
@@ -56,6 +60,7 @@ export class StateService {
    */
   async initialize(): Promise<void> {
     try {
+      await migrateLegacyFile(path.join(__dirname, '../../state.json'), this.statePath);
       const data = await fs.readFile(this.statePath, 'utf-8');
       this.currentState = JSON.parse(data);
       logger.info('State loaded', { network: this.currentState?.network });
@@ -76,6 +81,7 @@ export class StateService {
   async save(state: ServerState): Promise<void> {
     try {
       const data = JSON.stringify(state, null, 2);
+      await fs.mkdir(path.dirname(this.statePath), { recursive: true });
       await fs.writeFile(this.statePath, data, 'utf-8');
       this.currentState = state;
       logger.info('State saved', { network: state.network });
@@ -96,6 +102,13 @@ export class StateService {
    * Save network configuration
    */
   async saveNetworkState(network: 'mainnet' | 'testnet' | 'previewnet' | 'local'): Promise<void> {
+    // Never write a network name the server cannot load again
+    if (!isSupportedNetwork(network)) {
+      throw new Error(
+        `Unknown network: ${String(network)}. Supported networks: ${SUPPORTED_NETWORKS.join(', ')}`
+      );
+    }
+
     const state: ServerState = {
       network,
       lastUpdated: new Date().toISOString(),
@@ -118,7 +131,8 @@ export class StateService {
    */
   async backup(
     includePrivateKeys: boolean = false,
-    outputPath?: string
+    outputPath?: string,
+    filename?: string
   ): Promise<{ filePath: string; itemCount: number; warning?: string }> {
     try {
       // Ensure backup directory exists
@@ -144,7 +158,7 @@ export class StateService {
       const backup: StateBackup | StateBackupWithKeys = {
         version: '1.0.0',
         timestamp: new Date().toISOString(),
-        serverVersion: '0.1.0',
+        serverVersion: getPackageVersion(),
         backup: {
           addressBook: addressBookData as any,
           network: {
@@ -156,17 +170,22 @@ export class StateService {
         },
       };
 
-      // Generate filename
+      // Generate filename (an explicit `filename` wins, then outputPath)
       const timestamp = new Date()
         .toISOString()
         .replace(/:/g, '-')
         .replace(/\..+/, '')
         .replace('T', '-');
-      const defaultFilename = `hashpilot-state-backup-${timestamp}.json`;
+      const chosenName = filename?.trim()
+        ? filename.trim().endsWith('.json')
+          ? filename.trim()
+          : `${filename.trim()}.json`
+        : `hashpilot-state-backup-${timestamp}.json`;
       const outputDir = outputPath || this.backupDir;
-      const filePath = path.join(outputDir, defaultFilename);
+      const filePath = path.join(outputDir, chosenName);
 
       // Write backup file
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
       const data = JSON.stringify(backup, null, 2);
       await fs.writeFile(filePath, data, 'utf-8');
 
@@ -237,22 +256,21 @@ export class StateService {
             await addressBook.add(fullEntry);
           }
         } else {
-          // Replace entire address book
-          // This is done by directly writing to the address book file
-          const addressBookPath = path.join(__dirname, '../../addressbook.json');
-          const entries = backup.backup.addressBook.map((entry) => ({
+          // Replace the entire address book through the service, so it writes
+          // to the configured data directory and resets what is in memory.
+          const entries: AddressBookEntry[] = backup.backup.addressBook.map((entry) => ({
             accountId: entry.accountId,
             alias: entry.alias,
             nickname: entry.nickname,
-            publicKey: entry.publicKey,
+            publicKey: entry.publicKey as string | undefined,
             memo: entry.memo,
             createdAt: entry.createdAt,
             updatedAt: new Date().toISOString(),
-            privateKey: 'privateKey' in entry ? entry.privateKey : undefined,
+            privateKey: ('privateKey' in entry ? entry.privateKey : undefined) as
+              string | undefined,
           }));
 
-          await fs.writeFile(addressBookPath, JSON.stringify(entries, null, 2), 'utf-8');
-          await addressBook.initialize(); // Reload
+          await addressBook.replaceAll(entries);
         }
 
         // Check for missing private keys
@@ -266,14 +284,16 @@ export class StateService {
         }
       }
 
-      // Restore network configuration
+      // Restore network configuration. The backup file is arbitrary JSON from
+      // disk, so an unrecognised network is skipped with a warning rather than
+      // written through or failing the whole restore.
       if (backup.backup.network?.current) {
-        const network = backup.backup.network.current as
-          | 'mainnet'
-          | 'testnet'
-          | 'previewnet'
-          | 'local';
-        await this.saveNetworkState(network);
+        const network = backup.backup.network.current;
+        if (isSupportedNetwork(network)) {
+          await this.saveNetworkState(network);
+        } else {
+          logger.warn('Skipping unsupported network in backup', { network });
+        }
       }
 
       logger.info('State restored from backup', {
@@ -303,11 +323,16 @@ export class StateService {
    * Export current state to JSON
    */
   async export(
-    outputPath: string,
+    outputPath?: string,
     format: 'json' | 'compact' | 'pretty' = 'pretty',
     includePrivateKeys: boolean = false
   ): Promise<{ filePath: string; size: number }> {
     try {
+      if (!outputPath) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        outputPath = path.join(getDataDir(), 'exports', `state-export-${stamp}.json`);
+      }
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
       // Get address book entries
       const entries = addressBook.list();
 
@@ -328,7 +353,7 @@ export class StateService {
       const exportData = {
         version: '1.0.0',
         exportedAt: new Date().toISOString(),
-        serverVersion: '0.1.0',
+        serverVersion: getPackageVersion(),
         data: {
           addressBook: addressBookData,
           network: {

@@ -26,7 +26,11 @@ export async function backupState(args: {
       logger.warn('⚠️  Store this backup securely and never share it.');
     }
 
-    const result = await stateService.backup(args.includePrivateKeys || false, args.outputPath);
+    const result = await stateService.backup(
+      args.includePrivateKeys || false,
+      args.outputPath,
+      args.filename
+    );
 
     return {
       success: true,
@@ -81,7 +85,7 @@ export async function restoreState(args: {
  * Export server state
  */
 export async function exportState(args: {
-  outputPath: string;
+  outputPath?: string;
   format?: 'json' | 'compact' | 'pretty';
   includePrivateKeys?: boolean;
 }): Promise<ToolResult> {
