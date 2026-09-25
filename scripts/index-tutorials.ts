@@ -16,6 +16,7 @@ import { DocumentChunker } from '../src/utils/document-chunker.js';
 import { createRAGConfig, validateRAGConfig } from '../src/config/rag.js';
 import { Document } from '../src/types/rag.js';
 import { logger } from '../src/utils/logger.js';
+import { sourceLanguageFromPath } from '../src/utils/source-language.js';
 
 // Load environment variables
 loadEnv();
@@ -46,24 +47,24 @@ interface TutorialSource {
 const TUTORIAL_SOURCES: TutorialSource[] = [
   {
     name: 'Hedera Examples',
-    owner: 'hashgraph',
-    repo: 'hedera-services',
+    owner: 'hiero-ledger',
+    repo: 'hiero-consensus-node', // formerly hashgraph/hedera-services
     branch: 'main',
     paths: ['docs', 'examples'],
     patterns: ['*.md'],
   },
   {
     name: 'Hedera JSON-RPC Relay',
-    owner: 'hashgraph',
-    repo: 'hedera-json-rpc-relay',
+    owner: 'hiero-ledger',
+    repo: 'hiero-json-rpc-relay', // formerly hashgraph/hedera-json-rpc-relay
     branch: 'main',
     paths: ['docs', 'examples'],
     patterns: ['*.md'],
   },
   {
     name: 'Hedera Local Node',
-    owner: 'hashgraph',
-    repo: 'hedera-local-node',
+    owner: 'hiero-ledger',
+    repo: 'hiero-local-node', // deprecated in favour of Solo, kept for reference
     branch: 'main',
     paths: ['.'],
     patterns: ['*.md'],
@@ -76,28 +77,98 @@ const TUTORIAL_SOURCES: TutorialSource[] = [
     paths: ['contracts', 'docs', 'test'],
     patterns: ['*.md', '*.sol'],
   },
+  // Solo replaces the deprecated Hiero Local Node for running a local network
+  {
+    name: 'Solo (local network)',
+    owner: 'hiero-ledger',
+    repo: 'solo',
+    branch: 'main',
+    paths: ['docs', 'examples'],
+    patterns: ['*.md'],
+  },
+  {
+    name: 'Solo documentation',
+    owner: 'hiero-ledger',
+    repo: 'solo-docs',
+    branch: 'main',
+    paths: ['content'],
+    patterns: ['*.md'],
+  },
+  // The CLI HashPilot's own wrapper looks for
+  {
+    name: 'Hiero CLI',
+    owner: 'hiero-ledger',
+    repo: 'hiero-cli',
+    branch: 'main',
+    paths: ['docs', 'skills'],
+    patterns: ['*.md'],
+  },
+  // Stablecoin Studio: HashPilot ships a stablecoin_manage tool built on it
+  {
+    name: 'Stablecoin Studio',
+    owner: 'hashgraph',
+    repo: 'stablecoin-studio',
+    branch: 'main',
+    paths: ['documentation', 'docs'],
+    patterns: ['*.md'],
+  },
+  // Official agent tooling, the closest neighbour to HashPilot itself
+  {
+    name: 'Hedera Agent Kit (JS)',
+    owner: 'hashgraph',
+    repo: 'hedera-agent-kit-js',
+    branch: 'main',
+    paths: ['docs', 'examples'],
+    patterns: ['*.md'],
+  },
+  // Wallet integration, a common integration guide request
+  {
+    name: 'Hedera Wallet Connect',
+    owner: 'hashgraph',
+    repo: 'hedera-wallet-connect',
+    branch: 'main',
+    paths: ['.'],
+    patterns: ['*.md'],
+  },
+  {
+    name: 'Hedera NFT SDK',
+    owner: 'hashgraph',
+    repo: 'hedera-nft-sdk',
+    branch: 'main',
+    paths: ['docs', 'examples', '.'],
+    patterns: ['*.md'],
+  },
+  // Mirror Node REST/web3 API documentation, straight from the implementation
+  {
+    name: 'Hiero Mirror Node',
+    owner: 'hiero-ledger',
+    repo: 'hiero-mirror-node',
+    branch: 'main',
+    paths: ['docs'],
+    patterns: ['*.md'],
+  },
 ];
 
 // Additional single-file tutorials to fetch
 const SINGLE_FILE_TUTORIALS = [
   {
     name: 'SDK JS Getting Started',
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-js',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-js',
     branch: 'main',
     path: 'README.md',
   },
   {
     name: 'SDK Java Getting Started',
-    owner: 'hashgraph',
-    repo: 'hedera-sdk-java',
+    owner: 'hiero-ledger',
+    repo: 'hiero-sdk-java',
     branch: 'main',
     path: 'README.md',
   },
   {
     name: 'JSON-RPC Relay Setup',
-    owner: 'hashgraph',
-    repo: 'hedera-json-rpc-relay',
+    owner: 'hiero-ledger',
+    repo: 'hiero-json-rpc-relay', // formerly hashgraph/hedera-json-rpc-relay
     branch: 'main',
     path: 'README.md',
   },
@@ -201,11 +272,16 @@ async function listTutorialFiles(
       }
 
       // Recurse into subdirectory
-      const subFiles = await listTutorialFiles(source, entry.path, maxFiles - files.length, depth + 1);
+      const subFiles = await listTutorialFiles(
+        source,
+        entry.path,
+        maxFiles - files.length,
+        depth + 1
+      );
       files.push(...subFiles);
     } else if (entry.type === 'file') {
       // Check if file matches any pattern
-      const matches = source.patterns.some(pattern => {
+      const matches = source.patterns.some((pattern) => {
         if (pattern.startsWith('*.')) {
           const ext = pattern.slice(1);
           return entry.name.endsWith(ext);
@@ -243,7 +319,7 @@ function extractTitle(content: string, filePath: string): string {
   return fileName
     .replace(/\.[^.]+$/, '')
     .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, c => c.toUpperCase());
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
@@ -286,7 +362,7 @@ function extractTags(filePath: string, sourceName: string, content: string): str
 
   // Extract from path
   const segments = filePath.split('/').filter(Boolean);
-  segments.forEach(seg => {
+  segments.forEach((seg) => {
     const cleaned = seg.toLowerCase().replace(/[^a-z0-9]/g, '-');
     if (cleaned.length > 2 && cleaned.length < 25 && !cleaned.match(/^\d+$/)) {
       tags.add(cleaned);
@@ -297,9 +373,11 @@ function extractTags(filePath: string, sourceName: string, content: string): str
   const contentLower = content.toLowerCase();
   if (contentLower.includes('account')) tags.add('account');
   if (contentLower.includes('token')) tags.add('token');
-  if (contentLower.includes('hts') || contentLower.includes('hedera token service')) tags.add('hts');
+  if (contentLower.includes('hts') || contentLower.includes('hedera token service'))
+    tags.add('hts');
   if (contentLower.includes('hcs') || contentLower.includes('consensus')) tags.add('hcs');
-  if (contentLower.includes('smart contract') || contentLower.includes('solidity')) tags.add('smart-contract');
+  if (contentLower.includes('smart contract') || contentLower.includes('solidity'))
+    tags.add('smart-contract');
   if (contentLower.includes('evm')) tags.add('evm');
   if (contentLower.includes('nft')) tags.add('nft');
   if (contentLower.includes('defi')) tags.add('defi');
@@ -390,7 +468,7 @@ Examples:
 
   if (!validation.valid) {
     console.error('❌ Configuration validation failed:');
-    validation.errors.forEach(err => console.error(`   - ${err}`));
+    validation.errors.forEach((err) => console.error(`   - ${err}`));
     process.exit(1);
   }
   console.log('✅ Configuration validated\n');
@@ -448,7 +526,7 @@ Examples:
 
         // Rate limiting
         if (fetchedCount % 10 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
 
@@ -487,6 +565,19 @@ Examples:
 
   for (const doc of allDocuments) {
     const chunks = documentChunker.chunk(doc);
+
+    // A raw source file has no markdown fences, so the chunker stores it as
+    // prose. Mark it as code in its own language, or the code tools never see
+    // it (this hid all 327 Solidity contracts from hedera-smart-contracts).
+    const language = sourceLanguageFromPath(doc.url);
+    if (language) {
+      for (const chunk of chunks) {
+        chunk.metadata.hasCode = true;
+        chunk.metadata.language = language;
+        chunk.metadata.codeLanguages = [language];
+      }
+    }
+
     allChunks.push(...chunks);
   }
 
@@ -496,7 +587,7 @@ Examples:
 
   // Generate embeddings
   console.log('🧮 Generating embeddings...');
-  const texts = allChunks.map(c => c.text);
+  const texts = allChunks.map((c) => c.text);
   const embeddings = await embeddingService.generateEmbeddingsBatch(texts);
 
   // Attach embeddings to chunks
@@ -523,7 +614,7 @@ Examples:
 
   if (stats.errors.length > 0) {
     console.log(`\n⚠️  Errors (${stats.errors.length}):`);
-    stats.errors.slice(0, 10).forEach(err => console.log(`   - ${err}`));
+    stats.errors.slice(0, 10).forEach((err) => console.log(`   - ${err}`));
   }
 
   // Check total chunks in ChromaDB
@@ -538,7 +629,7 @@ Examples:
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   logger.error('Tutorial indexing failed', { error: error.message });
   process.exit(1);

@@ -208,56 +208,81 @@ Last indexed: ${new Date().toISOString()}
 /**
  * Create document from exchange rate data
  */
-function createExchangeRateDocument(data: any, network: string): Document {
-  const currentRate = data.current_rate;
-  const nextRate = data.next_rate;
+/**
+ * Exchange rate reference.
+ *
+ * Deliberately records what the rate *means* and not its value. An earlier
+ * version baked a live snapshot into a document headed "Current Exchange Rate"
+ * and "Next Exchange Rate", tagged `pricing` and `usd`. It went stale the hour
+ * it was indexed, and a question about HBAR's price retrieved it and was
+ * answered with those figures as though they were market data. The two dates
+ * were also mislabelled: `expiration_time` is when a rate *expires*, not when
+ * it takes effect, so the "next" rate appeared to predate the current one.
+ *
+ * The rate is a fee-conversion rate set by the council, not a market price, and
+ * the live value belongs in a tool call, not in a vector index.
+ */
+function createExchangeRateDocument(_data: any, network: string): Document {
+  const content = `# Hedera ${network.toUpperCase()} Exchange Rate (fee conversion)
 
-  const content = `# Hedera ${network.toUpperCase()} Exchange Rates
+## What this rate is
 
-## Current Exchange Rate
-- **USD to HBAR**: ${currentRate?.cent_equivalent || 'N/A'} cents = ${currentRate?.hbar_equivalent || 'N/A'} tinybars
-- **Effective From**: ${currentRate?.expiration_time ? new Date(currentRate.expiration_time * 1000).toISOString() : 'Current'}
-- **Rate**: 1 USD = ${currentRate?.hbar_equivalent && currentRate?.cent_equivalent ? (currentRate.hbar_equivalent / (currentRate.cent_equivalent / 100)).toFixed(2) : 'N/A'} HBAR
+Hedera publishes an exchange rate that converts USD-denominated fees into
+tinybars. It is a **protocol fee-conversion rate set by the Hedera governing
+council — it is not the market price of HBAR**, and it must never be quoted as
+one. It exists so that transaction fees stay stable in fiat terms while the
+market price moves.
 
-## Next Exchange Rate
-- **USD to HBAR**: ${nextRate?.cent_equivalent || 'N/A'} cents = ${nextRate?.hbar_equivalent || 'N/A'} tinybars
-- **Effective From**: ${nextRate?.expiration_time ? new Date(nextRate.expiration_time * 1000).toISOString() : 'Pending'}
+The endpoint publishes two rates: the one in force, and the one that replaces it
+when the current one expires. "Next" means the next fee period, typically the
+next hour. It is **not a forecast**, and it says nothing about future value.
 
-## Understanding Exchange Rates
+## Getting the current value
 
-### Purpose
-Exchange rates are used to:
-1. Calculate transaction fees in USD terms
-2. Maintain fee stability regardless of HBAR price fluctuations
-3. Provide predictable costs for developers
+The rate changes continuously, so no fixed value is recorded here. Query it
+live:
 
-### Rate Updates
-- Exchange rates are updated regularly by the Hedera governing council
-- Updates ensure fees remain stable in fiat terms
-- Rate changes are announced in advance
+\`\`\`
+GET ${MIRROR_NODE_CONFIG[network as keyof typeof MIRROR_NODE_CONFIG]}/api/v1/network/exchangerate
+\`\`\`
 
-### Fee Calculation Example
-If a transaction costs 1,000,000 tinybars and:
-- Current rate: ${currentRate?.cent_equivalent || '12'} cents = ${currentRate?.hbar_equivalent || '100000000'} tinybars
-- USD cost = (1,000,000 / ${currentRate?.hbar_equivalent || '100000000'}) * (${currentRate?.cent_equivalent || '12'} / 100) USD
+Each rate carries \`cent_equivalent\`, \`hbar_equivalent\` and an
+\`expiration_time\` — the moment that rate stops applying, not the moment it
+starts.
+
+## Converting a fee
+
+With a rate of \`cent_equivalent\` cents per \`hbar_equivalent\` tinybars, a
+fee of N tinybars costs:
+
+\`\`\`
+usd = (N / hbar_equivalent) * (cent_equivalent / 100)
+\`\`\`
+
+## Market price
+
+The market price of HBAR is not published by the Hedera network and is not
+available from this documentation or from any HashPilot tool. Use a market data
+provider for that.
 
 ## Network Information
 - Network: ${network}
-- Last Updated: ${new Date().toISOString()}
-- Data Source: Hedera Mirror Node API
+- Data Source: Hedera Mirror Node API (queried live, not cached here)
 `;
+
+  const url = `${MIRROR_NODE_CONFIG[network as keyof typeof MIRROR_NODE_CONFIG]}/api/v1/network/exchangerate`;
 
   return {
     id: `exchange-rate-${network}`,
-    url: `${MIRROR_NODE_CONFIG[network as keyof typeof MIRROR_NODE_CONFIG]}/api/v1/network/exchangerate`,
-    title: `Hedera ${network.toUpperCase()} Exchange Rates`,
+    url,
+    title: `Hedera ${network.toUpperCase()} Exchange Rate (fee conversion, not market price)`,
     content,
     metadata: {
-      url: `${MIRROR_NODE_CONFIG[network as keyof typeof MIRROR_NODE_CONFIG]}/api/v1/network/exchangerate`,
-      title: `Hedera ${network.toUpperCase()} Exchange Rates`,
-      description: `Current and next exchange rates for Hedera ${network} USD to HBAR conversion`,
+      url,
+      title: `Hedera ${network.toUpperCase()} Exchange Rate (fee conversion, not market price)`,
+      description: `How Hedera's USD-to-tinybar fee conversion rate works on ${network}. Not a market price.`,
       contentType: 'reference',
-      tags: ['exchange-rate', 'pricing', 'usd', 'hbar', network, 'conversion', 'fees'],
+      tags: ['exchange-rate', 'fees', 'fee-conversion', 'hbar', network],
       crawledAt: new Date().toISOString(),
     },
   };
@@ -426,7 +451,7 @@ Examples:
 
   if (!validation.valid) {
     console.error('❌ Configuration validation failed:');
-    validation.errors.forEach(err => console.error(`   - ${err}`));
+    validation.errors.forEach((err) => console.error(`   - ${err}`));
     process.exit(1);
   }
   console.log('✅ Configuration validated\n');
@@ -527,7 +552,7 @@ Examples:
 
   // Generate embeddings
   console.log('🧮 Generating embeddings...');
-  const texts = allChunks.map(c => c.text);
+  const texts = allChunks.map((c) => c.text);
   const embeddings = await embeddingService.generateEmbeddingsBatch(texts);
 
   // Attach embeddings to chunks
@@ -554,7 +579,7 @@ Examples:
 
   if (stats.errors.length > 0) {
     console.log(`\n⚠️  Errors (${stats.errors.length}):`);
-    stats.errors.forEach(err => console.log(`   - ${err}`));
+    stats.errors.forEach((err) => console.log(`   - ${err}`));
   }
 
   // Check total chunks in ChromaDB
@@ -569,7 +594,7 @@ Examples:
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   logger.error('Network config indexing failed', { error: error.message });
   process.exit(1);

@@ -41,8 +41,8 @@ interface IndexingStats {
 }
 
 const HIP_CONFIG = {
-  owner: 'hashgraph',
-  repo: 'hedera-improvement-proposal',
+  owner: 'hiero-ledger',
+  repo: 'hiero-improvement-proposals', // moved from hashgraph/hedera-improvement-proposal
   branch: 'main',
   hipsDir: 'HIP',
 };
@@ -182,7 +182,8 @@ function createHIPDocument(content: string, filePath: string, metadata: HIPMetad
   const contentLower = content.toLowerCase();
   if (contentLower.includes('token')) tags.push('token');
   if (contentLower.includes('consensus')) tags.push('consensus');
-  if (contentLower.includes('smart contract') || contentLower.includes('evm')) tags.push('smart-contract');
+  if (contentLower.includes('smart contract') || contentLower.includes('evm'))
+    tags.push('smart-contract');
   if (contentLower.includes('file service')) tags.push('file-service');
   if (contentLower.includes('account')) tags.push('account');
 
@@ -223,7 +224,7 @@ async function main() {
 
   if (!validation.valid) {
     console.error('❌ Configuration validation failed:');
-    validation.errors.forEach(err => console.error(`   - ${err}`));
+    validation.errors.forEach((err) => console.error(`   - ${err}`));
     process.exit(1);
   }
   console.log('✅ Configuration validated\n');
@@ -239,10 +240,7 @@ async function main() {
   console.log('✅ ChromaDB connected');
 
   // Embedding service
-  const embeddingService = new EmbeddingService(
-    ragConfig.openaiApiKey,
-    ragConfig.embeddingModel
-  );
+  const embeddingService = new EmbeddingService(ragConfig.openaiApiKey, ragConfig.embeddingModel);
   console.log('✅ Embedding service initialized');
 
   // Chunking service
@@ -263,7 +261,7 @@ async function main() {
 
   // Filter for HIP markdown files
   const hipMarkdownFiles = hipFiles.filter(
-    f => f.type === 'file' && f.name.match(/^hip-\d+\.md$/i)
+    (f) => f.type === 'file' && f.name.match(/^hip-\d+\.md$/i)
   );
 
   console.log(`   Found ${hipMarkdownFiles.length} HIPs\n`);
@@ -306,7 +304,7 @@ async function main() {
 
       // Rate limit to avoid GitHub throttling
       if (batchDocs.length % 10 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -325,11 +323,13 @@ async function main() {
     allChunks.push(...chunks);
   }
 
-  console.log(`✅ Created ${allChunks.length} chunks (avg ${(allChunks.length / stats.totalHIPs).toFixed(1)} chunks/HIP)\n`);
+  console.log(
+    `✅ Created ${allChunks.length} chunks (avg ${(allChunks.length / stats.totalHIPs).toFixed(1)} chunks/HIP)\n`
+  );
 
   // Generate embeddings
   console.log('🧮 Generating embeddings...');
-  const texts = allChunks.map(c => c.text);
+  const texts = allChunks.map((c) => c.text);
   const embeddings = await embeddingService.generateEmbeddingsBatch(texts);
 
   // Attach embeddings to chunks
@@ -356,7 +356,7 @@ async function main() {
 
   if (stats.errors.length > 0) {
     console.log(`\n⚠️  Errors (${stats.errors.length}):`);
-    stats.errors.slice(0, 10).forEach(err => console.log(`   - ${err}`));
+    stats.errors.slice(0, 10).forEach((err) => console.log(`   - ${err}`));
     if (stats.errors.length > 10) {
       console.log(`   ... and ${stats.errors.length - 10} more errors`);
     }
@@ -373,7 +373,7 @@ async function main() {
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   logger.error('HIP indexing failed', { error: error.message });
   process.exit(1);

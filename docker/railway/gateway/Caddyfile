@@ -1,0 +1,63 @@
+# HashPilot Chroma gateway
+#
+# Sits in front of a private ChromaDB service and enforces two tokens:
+#   CHROMA_ADMIN_TOKEN  full access (indexing, collection management)
+#   CHROMA_READ_TOKEN   read-only: GET/HEAD anywhere, POST only to query/get/count
+# Tokens are accepted as `X-Chroma-Token: <token>` or `Authorization: Bearer <token>`.
+# Heartbeat and version stay public so uptime checks need no secret.
+
+{
+	admin off
+	auto_https off
+}
+
+(reader) {
+	@readGet method GET HEAD OPTIONS
+	@readPost {
+		method POST
+		path_regexp ^/api/v2/tenants/[^/]+/databases/[^/]+/collections/[^/]+/(query|get|count)$
+	}
+	handle @readGet {
+		reverse_proxy {$CHROMA_UPSTREAM}
+	}
+	handle @readPost {
+		reverse_proxy {$CHROMA_UPSTREAM}
+	}
+	handle {
+		respond "read-only token: writes are not permitted" 403
+	}
+}
+
+:{$PORT} {
+	log {
+		output stdout
+		format console
+	}
+
+	@public path / /api/v2/heartbeat /api/v2/version /api/v2/pre-flight-checks /api/v1/heartbeat
+	handle @public {
+		reverse_proxy {$CHROMA_UPSTREAM}
+	}
+
+	@adminHeader header X-Chroma-Token {$CHROMA_ADMIN_TOKEN}
+	@adminBearer header Authorization "Bearer {$CHROMA_ADMIN_TOKEN}"
+	handle @adminHeader {
+		reverse_proxy {$CHROMA_UPSTREAM}
+	}
+	handle @adminBearer {
+		reverse_proxy {$CHROMA_UPSTREAM}
+	}
+
+	@readerHeader header X-Chroma-Token {$CHROMA_READ_TOKEN}
+	@readerBearer header Authorization "Bearer {$CHROMA_READ_TOKEN}"
+	handle @readerHeader {
+		import reader
+	}
+	handle @readerBearer {
+		import reader
+	}
+
+	handle {
+		respond "unauthorized: set X-Chroma-Token" 401
+	}
+}

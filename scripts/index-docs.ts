@@ -86,10 +86,7 @@ Environment Variables:
  * Format progress message
  */
 function formatProgress(progress: IndexingProgress): string {
-  const lines = [
-    `Status: ${progress.status}`,
-    `Message: ${progress.message}`,
-  ];
+  const lines = [`Status: ${progress.status}`, `Message: ${progress.message}`];
 
   if (progress.totalDocuments > 0) {
     lines.push(`Documents: ${progress.documentsProcessed}/${progress.totalDocuments}`);
@@ -133,7 +130,7 @@ async function main() {
 
     if (!validation.valid) {
       console.error('❌ Invalid configuration:');
-      validation.errors.forEach(error => console.error(`   - ${error}`));
+      validation.errors.forEach((error) => console.error(`   - ${error}`));
       process.exit(1);
     }
 
@@ -154,10 +151,7 @@ async function main() {
     await chromaService.initialize();
     console.log('✅ ChromaDB connected');
 
-    const embeddingService = new EmbeddingService(
-      config.openaiApiKey,
-      config.embeddingModel,
-    );
+    const embeddingService = new EmbeddingService(config.openaiApiKey, config.embeddingModel);
     console.log('✅ Embedding service initialized');
 
     // Use FIRECRAWL_URL for local instance, or FIRECRAWL_API_KEY for cloud
@@ -252,7 +246,7 @@ async function main() {
     progress.status = 'embedding';
 
     const embeddings = await embeddingService.generateEmbeddingsBatch(
-      allChunks.map(c => c.text),
+      allChunks.map((c) => c.text),
       {
         onProgress: (current, total) => {
           progress.embeddingsGenerated = current;
@@ -262,7 +256,7 @@ async function main() {
             process.stdout.write(`\r   Progress: ${current}/${total} embeddings`);
           }
         },
-      },
+      }
     );
 
     if (!options.verbose) {
@@ -308,7 +302,7 @@ async function main() {
     if (progress.errors.length > 0 && options.verbose) {
       console.log('');
       console.log('⚠️  Errors:');
-      progress.errors.forEach(error => console.log(`   - ${error}`));
+      progress.errors.forEach((error) => console.log(`   - ${error}`));
     }
 
     console.log('');
@@ -330,7 +324,7 @@ async function main() {
 }
 
 // Run the script
-main().catch(error => {
+main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

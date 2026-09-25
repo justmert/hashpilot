@@ -20,7 +20,7 @@ import {
   buildApiUrl,
   buildRepoUrl,
 } from '../src/config/sdk-repos.js';
-import { Document, Chunk, DocumentContentType } from '../src/types/rag.js';
+import { Document, Chunk, DocumentContentType, ProgrammingLanguage } from '../src/types/rag.js';
 import { logger } from '../src/utils/logger.js';
 
 // Load environment variables
@@ -51,7 +51,7 @@ function parseArgs(): { sdks: SDKLanguage[]; maxExamples: number } {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--sdks' && args[i + 1]) {
       const requested = args[i + 1].split(',') as SDKLanguage[];
-      sdks = requested.filter(sdk => SDK_REPOS[sdk]);
+      sdks = requested.filter((sdk) => SDK_REPOS[sdk]);
       i++;
     } else if (args[i] === '--max-examples' && args[i + 1]) {
       maxExamples = parseInt(args[i + 1], 10);
@@ -141,7 +141,7 @@ async function listExampleFiles(
   dirPath: string,
   patterns: string[],
   maxFiles: number,
-  depth: number = 0,
+  depth: number = 0
 ): Promise<string[]> {
   if (depth > 5 || maxFiles <= 0) {
     return [];
@@ -156,7 +156,7 @@ async function listExampleFiles(
 
     if (entry.type === 'dir') {
       // Skip excluded directories
-      if (config.excludeDirs.some(exc => entry.name === exc || entry.path.includes(exc))) {
+      if (config.excludeDirs.some((exc) => entry.name === exc || entry.path.includes(exc))) {
         continue;
       }
 
@@ -166,12 +166,12 @@ async function listExampleFiles(
         entry.path,
         patterns,
         maxFiles - files.length,
-        depth + 1,
+        depth + 1
       );
       files.push(...subFiles);
     } else if (entry.type === 'file') {
       // Check if file matches any pattern
-      const matches = patterns.some(pattern => {
+      const matches = patterns.some((pattern) => {
         if (pattern.startsWith('*.')) {
           const ext = pattern.slice(1);
           return entry.name.endsWith(ext);
@@ -195,7 +195,7 @@ function createDocument(
   content: string,
   filePath: string,
   config: SDKRepoConfig,
-  language: SDKLanguage,
+  language: SDKLanguage
 ): Document {
   const url = `${buildRepoUrl(config)}/blob/${config.branch}/${filePath}`;
   const title = extractTitle(content, filePath);
@@ -235,7 +235,7 @@ function extractTitle(content: string, filePath: string): string {
   return fileName
     .replace(/\.[^.]+$/, '') // Remove extension
     .replace(/[-_]/g, ' ') // Replace dashes/underscores with spaces
-    .replace(/\b\w/g, c => c.toUpperCase()); // Title case
+    .replace(/\b\w/g, (c) => c.toUpperCase()); // Title case
 }
 
 /**
@@ -271,9 +271,7 @@ function classifyContentType(filePath: string): DocumentContentType {
 /**
  * Map SDK language to code language type
  */
-function mapSDKToCodeLanguage(
-  sdk: SDKLanguage,
-): 'javascript' | 'typescript' | 'java' | 'python' | 'go' | 'solidity' | undefined {
+function mapSDKToCodeLanguage(sdk: SDKLanguage): ProgrammingLanguage | undefined {
   switch (sdk) {
     case 'javascript':
       return 'javascript';
@@ -284,10 +282,18 @@ function mapSDKToCodeLanguage(
     case 'python':
       return 'python';
     case 'rust':
-      return undefined; // Rust not in our type system yet
+      return 'rust';
     default:
       return undefined;
   }
+}
+
+/** Documentation extensions; anything else fetched from an SDK repo is source code. */
+const DOC_EXTENSIONS = ['.md', '.mdx', '.markdown', '.txt', '.rst'];
+
+function isSourceFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return !DOC_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
 /**
@@ -298,7 +304,7 @@ function extractTags(filePath: string, sdk: SDKLanguage): string[] {
 
   // Extract from path segments
   const segments = filePath.split('/').filter(Boolean);
-  segments.forEach(seg => {
+  segments.forEach((seg) => {
     const cleaned = seg.toLowerCase().replace(/[^a-z0-9]/g, '-');
     if (cleaned.length > 2 && cleaned.length < 30) {
       tags.add(cleaned);
@@ -343,7 +349,7 @@ async function main() {
 
   if (!validation.valid) {
     console.error('❌ Configuration validation failed:');
-    validation.errors.forEach(err => console.error(`   - ${err}`));
+    validation.errors.forEach((err) => console.error(`   - ${err}`));
     process.exit(1);
   }
   console.log('✅ Configuration validated\n');
@@ -359,10 +365,7 @@ async function main() {
   console.log('✅ ChromaDB connected');
 
   // Embedding service
-  const embeddingService = new EmbeddingService(
-    ragConfig.openaiApiKey,
-    ragConfig.embeddingModel
-  );
+  const embeddingService = new EmbeddingService(ragConfig.openaiApiKey, ragConfig.embeddingModel);
   console.log('✅ Embedding service initialized');
 
   // Chunking service
@@ -406,7 +409,7 @@ async function main() {
       config,
       config.examplesDir,
       config.examplePatterns,
-      maxExamples,
+      maxExamples
     );
 
     console.log(`      Found ${exampleFiles.length} example files`);
@@ -422,7 +425,7 @@ async function main() {
 
       // Rate limit to avoid GitHub throttling
       if (exampleFiles.indexOf(exampleFile) % 10 === 9) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -434,8 +437,24 @@ async function main() {
     console.log('   ✂️  Chunking documents...');
     const allChunks: Chunk[] = [];
 
+    const codeLanguage = mapSDKToCodeLanguage(sdk);
     for (const doc of sdkDocuments) {
       const chunks = documentChunker.chunk(doc);
+
+      // A raw .go/.java/.py/.rs/.js example is entirely code, but the chunker
+      // only sees ``` fences, so it would mark these hasCode: false. That hides
+      // them from docs_get_example and from docs_search with hasCode: true,
+      // which are the tools meant to surface exactly these files.
+      if (isSourceFile(doc.url)) {
+        for (const chunk of chunks) {
+          chunk.metadata.hasCode = true;
+          if (codeLanguage) {
+            chunk.metadata.language = codeLanguage;
+            chunk.metadata.codeLanguages = [codeLanguage];
+          }
+        }
+      }
+
       allChunks.push(...chunks);
     }
 
@@ -443,7 +462,7 @@ async function main() {
 
     // 4. Generate embeddings
     console.log('   🧮 Generating embeddings...');
-    const texts = allChunks.map(c => c.text);
+    const texts = allChunks.map((c) => c.text);
     const embeddings = await embeddingService.generateEmbeddingsBatch(texts);
 
     // Attach embeddings to chunks
@@ -478,7 +497,7 @@ async function main() {
 
   if (stats.errors.length > 0) {
     console.log(`\n⚠️  Errors (${stats.errors.length}):`);
-    stats.errors.forEach(err => console.log(`   - ${err}`));
+    stats.errors.forEach((err) => console.log(`   - ${err}`));
   }
 
   // Check total chunks in ChromaDB
@@ -492,7 +511,7 @@ async function main() {
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   logger.error('SDK indexing failed', { error: error.message });
   process.exit(1);

@@ -66,7 +66,6 @@ async function testFirecrawl() {
     } else {
       console.log('❌ Crawl failed:', (crawlResult as any).error);
     }
-
   } catch (error: any) {
     console.error('Error:', error.message);
     console.error('Stack:', error.stack);

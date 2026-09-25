@@ -267,7 +267,7 @@ async function runTestQuery(
     const topTags = topResult.chunk.metadata.tags || [];
 
     // Check if any expected tags are present
-    const hasExpectedTags = query.expectedTags.some(tag =>
+    const hasExpectedTags = query.expectedTags.some((tag) =>
       topTags.some((t: string) => t.toLowerCase().includes(tag.toLowerCase()))
     );
 
@@ -284,7 +284,7 @@ async function runTestQuery(
         tags: topTags,
         contentType: topResult.chunk.metadata.contentType || 'unknown',
       },
-      allResults: results.slice(0, 3).map(r => ({
+      allResults: results.slice(0, 3).map((r) => ({
         title: r.chunk.metadata.title || 'Untitled',
         score: r.score,
         tags: r.chunk.metadata.tags || [],
@@ -521,12 +521,13 @@ async function main() {
 
     // Small delay to avoid rate limiting
     if (i % 5 === 4) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
   // Calculate coverage by category
-  const coverageByCategory: Record<string, { passed: number; total: number; percentage: number }> = {};
+  const coverageByCategory: Record<string, { passed: number; total: number; percentage: number }> =
+    {};
 
   for (const result of results) {
     const cat = result.query.category;
@@ -569,7 +570,7 @@ async function main() {
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   process.exit(1);
 });

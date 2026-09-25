@@ -1,4 +1,7 @@
-# HashPilot RAG System - Production Deployment
+# HashPilot RAG System - Production Deployment (legacy)
+
+> **Legacy.** This AWS EC2 / Traefik setup is no longer the hosted backend. The current deployment (ChromaDB behind a token gateway on Railway) is documented in [`docker/railway/README.md`](../railway/README.md). Kept for reference only.
+
 
 Deploy the HashPilot RAG (Retrieval-Augmented Generation) system on AWS EC2 (ARM64).
 

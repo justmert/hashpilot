@@ -10,7 +10,7 @@
  */
 
 import dotenv from 'dotenv';
-import { docsSearch, docsAsk, docsGetExample } from '../dist/tools/rag.js';
+import { docsSearch, docsGetExample } from '../../dist/tools/rag.js';
 
 // Load environment variables
 dotenv.config();
@@ -122,7 +122,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['accountcreatetransaction', 'client', 'java', 'accountid'],
     mustHaveCode: true,
     language: 'java',
-    minScore: 0.10,
+    minScore: 0.1,
   },
   {
     id: 'ii-java-2',
@@ -131,7 +131,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['transaction', 'execute', 'receipt', 'java'],
     mustHaveCode: true,
     language: 'java',
-    minScore: 0.10,
+    minScore: 0.1,
   },
 
   // ==========================================================================
@@ -144,7 +144,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['client', 'newclient', 'go', 'setoperator'],
     mustHaveCode: true,
     language: 'go',
-    minScore: 0.10,
+    minScore: 0.1,
   },
   {
     id: 'ii-go-2',
@@ -153,7 +153,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['token', 'create', 'go', 'hedera'],
     mustHaveCode: true,
     language: 'go',
-    minScore: 0.10,
+    minScore: 0.1,
   },
 
   // ==========================================================================
@@ -166,7 +166,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['python', 'sdk', 'hedera', 'client'],
     mustHaveCode: true,
     language: 'python',
-    minScore: 0.10,
+    minScore: 0.1,
   },
 
   // ==========================================================================
@@ -179,7 +179,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     expectedKeywords: ['rust', 'transaction', 'hedera', 'sdk'],
     mustHaveCode: true,
     language: 'rust',
-    minScore: 0.10,
+    minScore: 0.1,
   },
 
   // ==========================================================================
@@ -221,7 +221,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     requirement: 'iii) Tutorials',
     query: 'How to integrate with Hedera wallets',
     expectedKeywords: ['wallet', 'integration', 'connect', 'sign'],
-    minScore: 0.10,
+    minScore: 0.1,
   },
 
   // ==========================================================================
@@ -347,7 +347,7 @@ const TEST_SCENARIOS: TestScenario[] = [
     requirement: 'v) Network Configuration',
     query: 'Hedera mainnet node addresses',
     expectedKeywords: ['mainnet', 'node', 'address', 'endpoint'],
-    minScore: 0.10,
+    minScore: 0.1,
   },
   {
     id: 'v-3',
@@ -361,14 +361,14 @@ const TEST_SCENARIOS: TestScenario[] = [
     requirement: 'v) Network Configuration',
     query: 'Hedera transaction rate limits',
     expectedKeywords: ['rate', 'limit', 'tps', 'transaction', 'throughput'],
-    minScore: 0.10,
+    minScore: 0.1,
   },
   {
     id: 'v-5',
     requirement: 'v) Network Configuration',
     query: 'Fee schedule for Hedera services',
     expectedKeywords: ['fee', 'schedule', 'cost', 'price'],
-    minScore: 0.10,
+    minScore: 0.1,
   },
   {
     id: 'v-6',
@@ -415,11 +415,11 @@ async function runTestScenario(scenario: TestScenario): Promise<TestResult> {
 
     // Check for keywords
     const contentLower = content.toLowerCase();
-    const foundKeywords = scenario.expectedKeywords.filter(keyword =>
+    const foundKeywords = scenario.expectedKeywords.filter((keyword) =>
       contentLower.includes(keyword.toLowerCase())
     );
-    const missingKeywords = scenario.expectedKeywords.filter(keyword =>
-      !contentLower.includes(keyword.toLowerCase())
+    const missingKeywords = scenario.expectedKeywords.filter(
+      (keyword) => !contentLower.includes(keyword.toLowerCase())
     );
 
     // Calculate score
@@ -499,7 +499,7 @@ async function runCoverageTests(): Promise<void> {
     report.coverage = (report.passedTests / report.totalTests) * 100;
 
     // Small delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   // Generate summary report
@@ -518,13 +518,15 @@ async function runCoverageTests(): Promise<void> {
 
     const status = report.coverage >= 85 ? '✅' : report.coverage >= 70 ? '⚠️' : '❌';
     console.log(`\n${status} ${requirement}`);
-    console.log(`   Coverage: ${report.coverage.toFixed(1)}% (${report.passedTests}/${report.totalTests} tests passed)`);
+    console.log(
+      `   Coverage: ${report.coverage.toFixed(1)}% (${report.passedTests}/${report.totalTests} tests passed)`
+    );
 
     if (report.failedTests > 0) {
       console.log(`   Failed tests:`);
       report.details
-        .filter(d => !d.passed)
-        .forEach(d => {
+        .filter((d) => !d.passed)
+        .forEach((d) => {
           console.log(`     - ${d.scenario.id}: ${d.scenario.query}`);
           console.log(`       Missing keywords: ${d.missingKeywords.join(', ')}`);
         });
@@ -533,7 +535,12 @@ async function runCoverageTests(): Promise<void> {
 
   // Overall summary
   const overallCoverage = (totalPassed / totalTests) * 100;
-  const overallStatus = overallCoverage >= 85 ? '✅ EXCELLENT' : overallCoverage >= 70 ? '⚠️ GOOD' : '❌ NEEDS IMPROVEMENT';
+  const overallStatus =
+    overallCoverage >= 85
+      ? '✅ EXCELLENT'
+      : overallCoverage >= 70
+        ? '⚠️ GOOD'
+        : '❌ NEEDS IMPROVEMENT';
 
   console.log('\n' + '='.repeat(80));
   console.log('OVERALL COVERAGE');
@@ -553,8 +560,13 @@ async function runCoverageTests(): Promise<void> {
       console.log(`\n${requirement} (${report.coverage.toFixed(1)}%)`);
       console.log(`  Action needed: Expand indexing to include:`);
 
-      if (requirement.includes('JavaScript') || requirement.includes('Java') ||
-          requirement.includes('Go') || requirement.includes('Python') || requirement.includes('Rust')) {
+      if (
+        requirement.includes('JavaScript') ||
+        requirement.includes('Java') ||
+        requirement.includes('Go') ||
+        requirement.includes('Python') ||
+        requirement.includes('Rust')
+      ) {
         console.log(`    - SDK API documentation for ${requirement.split('(')[1].split(')')[0]}`);
         console.log(`    - Code examples from GitHub repository`);
         console.log(`    - SDK-specific tutorials`);

@@ -129,10 +129,7 @@ async function runPreflightChecks(): Promise<boolean> {
     if (!ragConfig.openaiApiKey) {
       throw new Error('OPENAI_API_KEY not set');
     }
-    const embeddingService = new EmbeddingService(
-      ragConfig.openaiApiKey,
-      ragConfig.embeddingModel,
-    );
+    const embeddingService = new EmbeddingService(ragConfig.openaiApiKey, ragConfig.embeddingModel);
     const testEmbedding = await embeddingService.generateEmbedding('test Hedera blockchain');
     if (testEmbedding && testEmbedding.length > 0) {
       console.log(`   ✅ OpenAI API working (embedding dim: ${testEmbedding.length})`);
@@ -193,8 +190,8 @@ async function runPreflightChecks(): Promise<boolean> {
  * Generate comprehensive coverage report
  */
 function generateReport(report: CoverageReport): string {
-  const successCount = report.indexers.filter(i => i.success).length;
-  const failedCount = report.indexers.filter(i => !i.success).length;
+  const successCount = report.indexers.filter((i) => i.success).length;
+  const failedCount = report.indexers.filter((i) => !i.success).length;
 
   let output = `
 ${'='.repeat(70)}
@@ -370,8 +367,10 @@ async function main() {
 
   // Define indexers to run
   const indexers = [
+    { name: 'Hedera Documentation (docs.hedera.com, git-based)', script: 'index-docs-repo' },
     { name: 'SDK Documentation & Examples', script: 'index-sdk' },
     { name: 'Hedera Improvement Proposals', script: 'index-hips' },
+    { name: 'Service Specifications (protobufs, HCS standards)', script: 'index-specs' },
     { name: 'Network Configuration & Fees', script: 'index-network' },
     { name: 'Tutorials & Smart Contracts', script: 'index-tutorials' },
   ];
@@ -382,7 +381,7 @@ async function main() {
     results.push(result);
 
     // Brief pause between indexers
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   // Get final chunk count
@@ -410,7 +409,7 @@ async function main() {
 }
 
 // Run
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Fatal error:', error.message);
   process.exit(1);
 });
