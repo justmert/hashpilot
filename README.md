@@ -1,7 +1,7 @@
 # HashPilot
 
 [![npm](https://img.shields.io/npm/v/hashpilot.svg)](https://www.npmjs.com/package/hashpilot)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/justmert/hashpilot/blob/master/LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
 **The Hedera developer toolkit for AI coding assistants.** An [MCP](https://modelcontextprotocol.io) server that lets Claude, Cursor, VS Code, Windsurf and Gemini CLI build on Hedera. It creates accounts, tokens and topics, deploys and verifies contracts, queries the Mirror Node, and answers from the Hedera docs, SDK examples and specifications.
@@ -63,7 +63,7 @@ No operator? Mirror Node queries, network info and documentation work without on
 | **Docs & code**     | `docs_search` `docs_ask` `docs_get_example` `code_generate`                                              | Answers and code examples from Hedera's docs, SDKs and specifications                                                                          |
 | **Workflow**        | `error_explain` `addressbook_manage` `state_manage` `deployment_history` `network_switch` `health_check` | Status codes explained, account aliases, backups, deploy history                                                                               |
 
-Full parameter reference: [docs/tools.mdx](docs/tools.mdx).
+Full parameter reference: [docs/tools.mdx](https://github.com/justmert/hashpilot/blob/master/docs/tools.mdx).
 
 ### Documentation index
 
@@ -115,7 +115,7 @@ Agent Kit columns list its core plugins only. Third-party plugins add more.
 | `MIRROR_NODE_URL`                                           | custom Mirror Node      | Defaults to Hedera's public Mirror Node                                                                         |
 | `HGRAPH_API_KEY`                                            | GraphQL                 | Free key at [app.hgraph.com](https://app.hgraph.com). `GRAPHQL_ENDPOINT` points to a different GraphQL endpoint |
 | `HASHPILOT_DATA_DIR`                                        | custom data location    | Address book, backups and history. Default `~/.hedera-mcp`                                                      |
-| `CHROMA_URL`, `CHROMA_AUTH_TOKEN`                           | self-hosted docs index  | [Self-hosting guide](docs/self-hosting.mdx)                                                                     |
+| `CHROMA_URL`, `CHROMA_AUTH_TOKEN`                           | self-hosted docs index  | [Self-hosting guide](https://github.com/justmert/hashpilot/blob/master/docs/self-hosting.mdx)                   |
 | `STABLECOIN_FACTORY_ADDRESS`, `STABLECOIN_RESOLVER_ADDRESS` | stablecoins off testnet | Only testnet addresses are built in                                                                             |
 
 Smart contract tools also need [Hardhat](https://hardhat.org) or [Foundry](https://getfoundry.sh) in the project. Node.js 20 or newer is required.
@@ -123,7 +123,7 @@ Smart contract tools also need [Hardhat](https://hardhat.org) or [Foundry](https
 ## Safety
 
 - **Start on testnet.** Your operator key lives in the MCP config, and HashPilot signs with it without asking.
-- **Know what costs HBAR.** Queries, docs and verification are free. Creating, transferring, minting and deploying are paid transactions. See [best practices](docs/best-practices.mdx).
+- **Know what costs HBAR.** Queries, docs and verification are free. Creating, transferring, minting and deploying are paid transactions. See [best practices](https://github.com/justmert/hashpilot/blob/master/docs/best-practices.mdx).
 - **Compile generated code before relying on it.** Unconfirmed API names are flagged, but not every mistake can be caught.
 
 ## Development
@@ -135,8 +135,8 @@ npm run test:mcp               # drives the built server as a real MCP client
 npm run smoke                  # read-only checks against HEDERA_NETWORK
 ```
 
-Changes are listed in [CHANGELOG.md](CHANGELOG.md). Maintenance notes and verification details are in [MAINTENANCE.md](MAINTENANCE.md).
+Changes are listed in [CHANGELOG.md](https://github.com/justmert/hashpilot/blob/master/CHANGELOG.md). Maintenance notes and verification details are in [MAINTENANCE.md](https://github.com/justmert/hashpilot/blob/master/MAINTENANCE.md).
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](https://github.com/justmert/hashpilot/blob/master/LICENSE)

@@ -1,7 +1,7 @@
 {
   "name": "hashpilot",
   "version": "0.2.1",
-  "description": "AI-powered MCP server for Hedera blockchain development - integrates with Claude Desktop, Cursor, Windsurf, and VS Code",
+  "description": "MCP server for building on Hedera: tokens, contracts, Mirror Node, GraphQL and docs, for Claude, Cursor, VS Code, Windsurf and Gemini CLI",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {
@@ -30,7 +31,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prebuild": "npm run clean",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build",
     "index-docs": "tsx scripts/index-docs.ts",
     "index-docs-repo": "tsx scripts/index-docs-repo.ts",
     "index-sdk": "tsx scripts/index-sdk.ts",
@@ -61,7 +62,14 @@
     "windsurf",
     "hbar",
     "smart-contracts",
-    "web3"
+    "web3",
+    "hiero",
+    "mcp-server",
+    "mirror-node",
+    "graphql",
+    "hardhat",
+    "foundry",
+    "gemini-cli"
   ],
   "author": "Mert Köklü",
   "license": "Apache-2.0",
